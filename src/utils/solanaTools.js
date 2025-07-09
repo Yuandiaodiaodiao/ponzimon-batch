@@ -256,14 +256,23 @@ class AccountDecoder {
 
 export class SolanaWalletTools {
   constructor(privateKey, config) {
+    console.log('Initializing SolanaWalletTools with config:', config)
+    
+    if (!config || !config.rpcUrl) {
+      throw new Error('Missing RPC URL in config')
+    }
+    
     this.config = config
     this.connection = new Connection(config.rpcUrl, 'confirmed')
+    console.log('Connection created to:', config.rpcUrl)
 
     // Create wallet from private key
     try {
       const secretKey = bs58.decode(privateKey)
       this.wallet = Keypair.fromSecretKey(secretKey)
+      console.log('Wallet created successfully, public key:', this.wallet.publicKey.toBase58())
     } catch (error) {
+      console.error('Failed to create wallet from private key:', error)
       throw new Error('Invalid private key')
     }
 
@@ -272,10 +281,17 @@ export class SolanaWalletTools {
     this.lockQueue = []
 
     // Initialize addresses
-    this.programId = new PublicKey(config.programId)
-    this.tokenMint = new PublicKey(config.tokenMint)
-    this.feesWallet = new PublicKey(config.feesWallet)
-    this.recipientAccount = new PublicKey(config.recipientAccount)
+    try {
+      this.programId = new PublicKey(config.programId)
+      this.tokenMint = new PublicKey(config.tokenMint)
+      this.feesWallet = new PublicKey(config.feesWallet)
+      this.recipientAccount = new PublicKey(config.recipientAccount)
+      
+      console.log('All addresses initialized successfully')
+    } catch (error) {
+      console.error('Failed to initialize addresses:', error)
+      throw new Error('Invalid address configuration')
+    }
 
     // Default referrer wallet (will be updated when account info is fetched)
     this.referrerWallet = new PublicKey(config.referrerWallet || config.feesWallet)
@@ -392,11 +408,88 @@ export class SolanaWalletTools {
 
   // Send transaction
   async sendTransaction(transaction) {
-    const signature = await this.connection.sendTransaction(transaction, [this.wallet], {
-      skipPreflight: false,
-      preflightCommitment: 'processed',
-    })
-    return signature
+    try {
+      console.log('Sending transaction...')
+      
+      // First try to simulate the transaction
+      const simulationResult = await this.connection.simulateTransaction(transaction)
+      console.log('Transaction simulation result:', simulationResult)
+      
+      if (simulationResult.value.err) {
+        console.error('Transaction simulation failed:', simulationResult.value.err)
+        throw new Error(`Transaction simulation failed: ${JSON.stringify(simulationResult.value.err)}`)
+      }
+      
+      // If simulation passed, send the transaction
+      const signature = await this.connection.sendTransaction(transaction, [this.wallet], {
+        skipPreflight: false,
+        preflightCommitment: 'processed',
+        maxRetries: 3
+      })
+      
+      console.log('Transaction sent successfully:', signature)
+      return signature
+    } catch (error) {
+      console.error('Failed to send transaction:', error)
+      
+      // Parse and format error messages
+      let errorMessage = error.message
+      
+      if (error.message.includes('0xbc4')) {
+        errorMessage = 'Insufficient resources or wrong timing for this operation'
+      } else if (error.message.includes('0x1')) {
+        errorMessage = 'Insufficient funds for this operation'
+      } else if (error.message.includes('custom program error')) {
+        const match = error.message.match(/custom program error: (0x[0-9a-f]+)/i)
+        if (match) {
+          const errorCode = parseInt(match[1], 16)
+          errorMessage = `Program error ${errorCode}: ${this.getErrorDescription(errorCode)}`
+        }
+      }
+      
+      throw new Error(errorMessage)
+    }
+  }
+  
+  // Get error description for common error codes
+  getErrorDescription(errorCode) {
+    const errorDescriptions = {
+      0xbc4: 'Game-specific error: Check if you have enough berries, account is properly initialized, and timing is correct',
+      0x1: 'Insufficient funds',
+      0x2: 'Invalid account',
+      0x3: 'Invalid instruction',
+      0x4: 'Account not found',
+      0x5: 'Account already exists',
+      0x6: 'Invalid signature',
+      0x7: 'Invalid program',
+      0x8: 'Invalid transaction',
+      0x9: 'Invalid fee',
+      0xa: 'Invalid nonce',
+      0xb: 'Invalid account owner',
+      0xc: 'Invalid program account',
+      0xd: 'Invalid system program',
+      0xe: 'Invalid token program',
+      0xf: 'Invalid mint',
+      0x10: 'Invalid token account',
+      0x11: 'Invalid token amount',
+      0x12: 'Invalid token owner',
+      0x13: 'Invalid token delegate',
+      0x14: 'Invalid token supply',
+      0x15: 'Invalid token decimals',
+      // Game-specific errors
+      0xbc4: 'Game error: May need to wait for cooldown, have insufficient berries, or wrong game state',
+      0x1771: 'Invalid game state',
+      0x1772: 'Insufficient berries',
+      0x1773: 'Account not initialized',
+      0x1774: 'Invalid card',
+      0x1775: 'Card already staked',
+      0x1776: 'Card not owned',
+      0x1777: 'Invalid farm type',
+      0x1778: 'Farm capacity exceeded',
+      0x1779: 'Invalid operation timing'
+    }
+    
+    return errorDescriptions[errorCode] || `Unknown error code: ${errorCode}. This might be a game-specific error - check account state and requirements.`
   }
 
   // Wait for confirmation
@@ -597,6 +690,19 @@ export class SolanaWalletTools {
 
   // Create open booster commit instruction
   async createOpenBoosterCommitInstruction() {
+    await this.ensureInitialized()
+    
+    console.log('Creating open booster commit instruction with accounts:', {
+      wallet: this.wallet.publicKey.toBase58(),
+      playerPDA: this.playerPDA.toBase58(),
+      globalState: this.globalState.toBase58(),
+      rewardsVault: this.rewardsVault.toBase58(),
+      playerTokenAccount: this.playerTokenAccount.toBase58(),
+      feesTokenAccount: this.feesTokenAccount.toBase58(),
+      referrerTokenAccount: this.referrerTokenAccount.toBase58(),
+      tokenMint: this.tokenMint.toBase58()
+    })
+    
     const accounts = [
       {
         pubkey: this.wallet.publicKey,
@@ -653,10 +759,80 @@ export class SolanaWalletTools {
       keys: accounts
     }
   }
+  // Check if account can open booster
+  async canOpenBooster() {
+    try {
+      const accountInfo = await this.getUserAccountInfo()
+      
+      if (!accountInfo) {
+        throw new Error('Account not initialized. Please initialize your account first.')
+      }
+      
+      // Check token balance (not berries!)
+      const tokenBalance = await this.getTokenBalance()
+      const minimumTokens = BigInt(100000) // 0.1 token needed (considering 6 decimals)
+      
+      console.log('Checking token balance for booster:', {
+        tokenBalance: tokenBalance.toString(),
+        minimumTokens: minimumTokens.toString(),
+        hasEnoughTokens: tokenBalance >= minimumTokens,
+        tokenMint: this.tokenMint.toBase58()
+      })
+      
+      if (tokenBalance < minimumTokens) {
+        const tokenAmount = Number(tokenBalance) / 1000000 // Convert to readable format
+        const minAmount = Number(minimumTokens) / 1000000
+        throw new Error(`Insufficient token balance. Need at least ${minAmount} tokens, but have ${tokenAmount}`)
+      }
+      
+      // Check if account has space for new cards
+      const currentCards = accountInfo.cards.length
+      const maxCards = 128 // Maximum cards per account
+      
+      if (currentCards >= maxCards) {
+        throw new Error(`Account is full. Maximum ${maxCards} cards allowed.`)
+      }
+      
+      // Check if account has a farm (required for opening boosters)
+      if (!accountInfo.farm) {
+        throw new Error('No farm found. Please initialize your farm first.')
+      }
+      
+      console.log('Booster check passed:', {
+        tokenBalance: tokenBalance.toString(),
+        tokenBalanceReadable: (Number(tokenBalance) / 1000000).toFixed(6),
+        currentCards,
+        maxCards,
+        farmType: accountInfo.farm.farm_type,
+        berries: accountInfo.berries
+      })
+      
+      return true
+    } catch (error) {
+      console.error('Booster check failed:', error)
+      throw error
+    }
+  }
+  
   async openBooster() {
     return await this.withLock(async () => {
-      await this.executeOpenBoosterCommit();
-      await this.executeSettleOpenBooster();
+      // Check if opening booster is allowed
+      await this.canOpenBooster()
+      
+      console.log('Starting booster opening process...')
+      
+      // Step 1: Execute open booster commit
+      console.log('Step 1: Executing open booster commit...')
+      await this.executeOpenBoosterCommit()
+      
+      // Wait a bit between steps
+      await new Promise(resolve => setTimeout(resolve, 2000))
+      
+      // Step 2: Execute settle open booster
+      console.log('Step 2: Executing settle open booster...')
+      await this.executeSettleOpenBooster()
+      
+      console.log('Booster opened successfully!')
     })
   }
   // Execute open booster commit
@@ -807,19 +983,33 @@ export class SolanaWalletTools {
 
   // Get user account info including cards and all player data
   async getUserAccountInfo() {
+    console.log('Getting user account info for:', this.wallet.publicKey.toBase58())
+    
     try {
-      const accountInfo = await this.connection.getAccountInfo(this.playerPDA)
+      // Add timeout to prevent hanging
+      const timeoutPromise = new Promise((_, reject) => {
+        setTimeout(() => reject(new Error('RPC request timeout')), 15000)
+      })
+      
+      const accountInfoPromise = this.connection.getAccountInfo(this.playerPDA)
+      
+      const accountInfo = await Promise.race([accountInfoPromise, timeoutPromise])
+      
+      console.log('Account info response:', accountInfo ? 'Account found' : 'Account not found')
+      
       if (!accountInfo) {
-        // Account not initialized
+        console.log('Account not initialized')
         return null
       }
 
+      console.log('Decoding account data...')
       const decoder = new AccountDecoder(this.connection)
       const playerData = await decoder.decodePlayerData(accountInfo.data)
-      console.log(playerData)
+      console.log('Player data decoded:', playerData)
 
       // Update referrer wallet if we have one from the account data
       if (playerData.referrer) {
+        console.log('Updating referrer wallet to:', playerData.referrer)
         this.referrerWallet = new PublicKey(playerData.referrer)
         // Reinitialize referrer token account with the new referrer
         try {
@@ -846,6 +1036,8 @@ export class SolanaWalletTools {
         }
       }).filter(card => card.id !== 0) // Filter out empty cards
 
+      console.log('Cards with stake status:', cardsWithStakeStatus.length)
+
       // Return full player data with cards including stake status
       return {
         initialized: true,
@@ -860,8 +1052,15 @@ export class SolanaWalletTools {
       }
     } catch (error) {
       console.error('Failed to get user account info:', error)
-      // Return null to indicate account not found/initialized
-      return null
+      
+      // More specific error handling
+      if (error.message.includes('timeout')) {
+        throw new Error('Network timeout - please check your connection')
+      } else if (error.message.includes('Invalid')) {
+        throw new Error('Invalid account configuration')
+      } else {
+        throw new Error(`Failed to fetch account: ${error.message}`)
+      }
     }
   }
 
@@ -967,6 +1166,64 @@ export class SolanaWalletTools {
       const stakeCardInstruction = await this.createStakeCardInstruction(cardIndex)
       computeBudgetInstructions.push(stakeCardInstruction)
       return await this.buildAndSendTransaction(computeBudgetInstructions)
+    })
+  }
+
+  // Transfer all tokens to recipient account
+  async transferAllTokensToRecipient() {
+    return await this.withLock(async () => {
+      try {
+        await this.ensureInitialized()
+        
+        console.log('Starting token transfer to recipient...')
+        
+        // Check current token balance
+        const tokenBalance = await this.getTokenBalance()
+        console.log('Current token balance:', tokenBalance.toString())
+        
+        if (tokenBalance <= 0) {
+          console.log('No tokens to transfer')
+          return false
+        }
+        
+        // Check if recipient account exists
+        const recipientExists = await this.checkAccountExists(this.recipientTokenAccount)
+        if (!recipientExists) {
+          console.log('Warning: Recipient token account does not exist')
+          throw new Error('Recipient token account does not exist')
+        }
+        
+        // Create transfer instruction
+        const transferInstructions = createComputeBudgetInstructions()
+        
+        const transferCheckedInstruction = createTransferCheckedInstruction(
+          this.playerTokenAccount,     // from
+          this.tokenMint,              // mint
+          this.recipientTokenAccount,  // to
+          this.wallet.publicKey,       // owner
+          tokenBalance,                // amount
+          await this.getTokenDecimals(), // decimals
+          [],                          // signers
+          TOKEN_PROGRAM_ID
+        )
+        
+        transferInstructions.push(transferCheckedInstruction)
+        
+        console.log('Executing token transfer transaction...')
+        const result = await this.buildAndSendTransaction(transferInstructions)
+        
+        if (result) {
+          console.log('Token transfer successful:', result)
+          return true
+        } else {
+          console.log('Token transfer failed')
+          return false
+        }
+        
+      } catch (error) {
+        console.error('Token transfer error:', error)
+        throw error
+      }
     })
   }
 

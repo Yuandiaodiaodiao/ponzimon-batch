@@ -1,4 +1,6 @@
-import { ref, reactive } from 'vue'
+import { ref, reactive, watch } from 'vue'
+import { NETWORK_PRESETS, STORAGE_KEYS } from '../utils/constants.js'
+import { StorageHelper, Validator } from '../utils/helpers.js'
 
 export function useNetworkConfig() {
   const currentNetwork = ref('devnet')
@@ -7,55 +9,117 @@ export function useNetworkConfig() {
     programId: '',
     tokenMint: '',
     feesWallet: '',
-    recipientAccount: ''
+    recipientAccount: '',
+    referrerWallet: ''
   })
 
-  const presets = {
-    devnet: {
-      rpcUrl: 'https://cool-indulgent-mountain.solana-devnet.quiknode.pro/2ed54ae3de7c4ae7428da73509cdd97da4fa7f71/',
-      programId: 'pv5gAmRb1GZ92k7iuLe5JdNmj5R8Ch61N4beuf2yEdK',
-      tokenMint: 'mmMeBvEs7dmLXPJZmVQGrV3rTujsAJQHrbJVHQApgJz',
-      feesWallet: '8kvqgxQG77pv6RvEou8f2kHSWi3rtx8F7MksXUqNLGmn',
-      recipientAccount: '2BhbtC6zXu5eFXfyXQ2aq6icA7xSXEeJTBUDC1ESqc9k'
-    },
-    mainnet: {
-      rpcUrl: 'https://api.mainnet-beta.solana.com',
-      programId: 'pv5gAmRb1GZ92k7iuLe5JdNmj5R8Ch61N4beuf2yEdK',
-      tokenMint: 'mmMeBvEs7dmLXPJZmVQGrV3rTujsAJQHrbJVHQApgJz',
-      feesWallet: '8kvqgxQG77pv6RvEou8f2kHSWi3rtx8F7MksXUqNLGmn',
-      recipientAccount: '2BhbtC6zXu5eFXfyXQ2aq6icA7xSXEeJTBUDC1ESqc9k'
-    }
-  }
-
-  const loadConfig = () => {
-    const savedConfig = localStorage.getItem('solana-config')
-    if (savedConfig) {
-      Object.assign(config, JSON.parse(savedConfig))
-    }
-
-    const savedNetwork = localStorage.getItem('solana-network')
-    if (savedNetwork) {
-      currentNetwork.value = savedNetwork
-    }
-  }
-
-  const saveConfig = () => {
-    localStorage.setItem('solana-config', JSON.stringify(config))
-    localStorage.setItem('solana-network', currentNetwork.value)
-  }
-
-  const applyPreset = (network) => {
-    currentNetwork.value = network
-    Object.assign(config, presets[network])
+  // 监听配置变化，自动保存
+  watch(() => ({ ...config }), () => {
     saveConfig()
+  }, { deep: true })
+
+  // 监听网络变化，自动保存
+  watch(currentNetwork, () => {
+    saveConfig()
+  })
+
+  /**
+   * 加载配置
+   */
+  const loadConfig = () => {
+    try {
+      // 加载保存的配置
+      const savedConfig = StorageHelper.get(STORAGE_KEYS.SOLANA_CONFIG)
+      if (savedConfig) {
+        const validation = Validator.validateConfig(savedConfig)
+        if (validation.valid) {
+          Object.assign(config, savedConfig)
+        } else {
+          console.warn('Invalid saved config, using defaults:', validation.errors)
+        }
+      }
+
+      // 加载保存的网络
+      const savedNetwork = StorageHelper.get(STORAGE_KEYS.SOLANA_NETWORK, 'devnet')
+      if (savedNetwork && NETWORK_PRESETS[savedNetwork]) {
+        currentNetwork.value = savedNetwork
+      }
+    } catch (error) {
+      console.error('Failed to load config:', error)
+      // 使用默认配置
+      applyPreset('devnet')
+    }
+  }
+
+  /**
+   * 保存配置
+   */
+  const saveConfig = () => {
+    try {
+      StorageHelper.set(STORAGE_KEYS.SOLANA_CONFIG, { ...config })
+      StorageHelper.set(STORAGE_KEYS.SOLANA_NETWORK, currentNetwork.value)
+    } catch (error) {
+      console.error('Failed to save config:', error)
+    }
+  }
+
+  /**
+   * 应用预设配置
+   */
+  const applyPreset = (network) => {
+    if (!NETWORK_PRESETS[network]) {
+      console.error(`Unknown network preset: ${network}`)
+      return false
+    }
+
+    try {
+      currentNetwork.value = network
+      Object.assign(config, NETWORK_PRESETS[network])
+      return true
+    } catch (error) {
+      console.error('Failed to apply preset:', error)
+      return false
+    }
+  }
+
+  /**
+   * 验证当前配置
+   */
+  const validateCurrentConfig = () => {
+    return Validator.validateConfig(config)
+  }
+
+  /**
+   * 重置配置到默认值
+   */
+  const resetConfig = () => {
+    applyPreset('devnet')
+  }
+
+  /**
+   * 获取所有可用的网络预设
+   */
+  const getAvailableNetworks = () => {
+    return Object.keys(NETWORK_PRESETS)
+  }
+
+  /**
+   * 检查是否为有效的网络
+   */
+  const isValidNetwork = (network) => {
+    return NETWORK_PRESETS.hasOwnProperty(network)
   }
 
   return {
     currentNetwork,
     config,
-    presets,
+    presets: NETWORK_PRESETS,
     loadConfig,
     saveConfig,
-    applyPreset
+    applyPreset,
+    validateCurrentConfig,
+    resetConfig,
+    getAvailableNetworks,
+    isValidNetwork
   }
 }
