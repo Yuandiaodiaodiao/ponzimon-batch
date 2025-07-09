@@ -70,24 +70,60 @@
           </div>
           
           <div class="wallet-actions">
-            <button @click="initGameAccount(index)" :disabled="!wallet.tools || wallet.loading">
+            <button @click="queryCards(index)" :disabled="!wallet.tools || wallet.loading">
+              {{ wallet.loading ? 'Processing...' : '刷新' }}
+            </button>
+            
+            <!-- Only show init button if account not initialized -->
+            <button 
+              v-if="!wallet.accountInitialized"
+              @click="initGameAccount(index)" 
+              :disabled="!wallet.tools || wallet.loading"
+            >
               {{ wallet.loading ? 'Processing...' : '开户+质押0 1' }}
             </button>
-            <button @click="openBooster(index)" :disabled="!wallet.tools || wallet.loading">
-              {{ wallet.loading ? 'Processing...' : '开箱一次' }}
-            </button>
-            <button @click="claimReward(index)" :disabled="!wallet.tools || wallet.loading">
-              {{ wallet.loading ? 'Processing...' : 'Claim Reward' }}
-            </button>
-            <button @click="queryCards(index)" :disabled="!wallet.tools || wallet.loading">
-              {{ wallet.loading ? 'Processing...' : 'List Cards' }}
-            </button>
+            
+            <!-- Only show these buttons if account is initialized -->
+            <template v-if="wallet.accountInitialized">
+              <button @click="openBooster(index)" :disabled="!wallet.tools || wallet.loading">
+                {{ wallet.loading ? 'Processing...' : '开箱一次' }}
+              </button>
+              <button @click="claimReward(index)" :disabled="!wallet.tools || wallet.loading">
+                {{ wallet.loading ? 'Processing...' : 'Claim Reward' }}
+              </button>
+            </template>
+          </div>
+          
+          <!-- Account Info Display -->
+          <div v-if="wallet.accountInfo" class="account-details">
+            <h4>Account Details</h4>
+            <div class="details-grid">
+              <div class="detail-item">
+                <span class="label">Berries:</span>
+                <span class="value">{{ wallet.accountInfo.berries }}</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Total Hashpower:</span>
+                <span class="value">{{ wallet.accountInfo.totalHashpower }}</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Farm Type:</span>
+                <span class="value">{{ wallet.accountInfo.farm?.farm_type }}</span>
+              </div>
+              <div class="detail-item">
+                <span class="label">Berry Capacity:</span>
+                <span class="value">{{ wallet.accountInfo.farm?.berry_capacity }}</span>
+              </div>
+            </div>
           </div>
           
           <!-- Cards List -->
           <div v-if="wallet.cards && wallet.cards.length > 0" class="cards-list">
-            <h4>Cards ({{ wallet.cards.length }})</h4>
-            <div class="cards-grid">
+            <div class="cards-header" @click="toggleCardsExpanded(index)">
+              <h4>Cards ({{ wallet.cards.length }})</h4>
+              <span class="toggle-icon">{{ wallet.cardsExpanded ? '▼' : '▶' }}</span>
+            </div>
+            <div v-show="wallet.cardsExpanded" class="cards-grid">
               <div 
                 v-for="(card, cardIndex) in wallet.cards" 
                 :key="cardIndex"
@@ -170,6 +206,17 @@ export default {
       if (savedNetwork) {
         currentNetwork.value = savedNetwork
       }
+      wallets.value.forEach((item,index)=>{
+          wallets.value[index].tools = new SolanaWalletTools(item.privateKey, config)
+          wallets.value[index].cards=[]
+          wallets.value[index].loading = false;
+          wallets.value[index].cardsExpanded = false;
+          wallets.value[index].accountInitialized = false;
+          wallets.value[index].accountInfo = null;
+          setTimeout(()=>{
+            queryCards(index);
+          },100);
+      })
     }
     
     const saveToStorage = () => {
@@ -192,7 +239,10 @@ export default {
         tools: null,
         status: 'Not initialized',
         loading: false,
-        cards: []
+        cards: [],
+        cardsExpanded: false,
+        accountInitialized: false,
+        accountInfo: null
       }
       wallets.value.push(newWallet)
       saveToStorage()
@@ -284,15 +334,26 @@ export default {
       if (!wallet.tools) return
       
       try {
-        wallet.loading = true
-        wallet.status = 'Querying cards...'
-        wallet.cards = (await wallet.tools.getUserCards()).filter(item=>item.id!==0)
-        wallet.status = `Found ${wallet.cards.length} cards`
+        wallet.status = 'Querying account info...'
+        const accountInfo = await wallet.tools.getUserAccountInfo()
+        
+        if (!accountInfo) {
+          // Account not initialized
+          wallet.status = 'Account not initialized'
+          wallet.accountInitialized = false
+          wallet.cards = []
+          wallet.accountInfo = null
+        } else {
+          // Account initialized, store all info
+          wallet.accountInitialized = true
+          wallet.cards = accountInfo.cards
+          wallet.accountInfo = accountInfo
+          wallet.status = `Found ${accountInfo.cards.length} cards | Berries: ${accountInfo.berries} | Hashpower: ${accountInfo.totalHashpower}`
+        }
       } catch (error) {
         wallet.status = `Error: ${error.message}`
-        console.error('Failed to query cards:', error)
-      } finally {
-        wallet.loading = false
+        wallet.accountInitialized = false
+        console.error('Failed to query account info:', error)
       }
     }
     
@@ -315,6 +376,10 @@ export default {
       }
     }
     
+    const toggleCardsExpanded = (index) => {
+      wallets.value[index].cardsExpanded = !wallets.value[index].cardsExpanded
+    }
+    
     onMounted(() => {
       loadFromStorage()
       if (!config.rpcUrl) {
@@ -335,7 +400,8 @@ export default {
       openBooster,
       claimReward,
       queryCards,
-      recycleCard
+      recycleCard,
+      toggleCardsExpanded
     }
   }
 }
@@ -470,8 +536,66 @@ export default {
   cursor: not-allowed;
 }
 
+.account-details {
+  margin-top: 20px;
+  padding: 15px;
+  background: #f8f9fa;
+  border-radius: 4px;
+}
+
+.account-details h4 {
+  margin: 0 0 10px 0;
+  color: #333;
+}
+
+.details-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 10px;
+}
+
+.detail-item {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+}
+
+.detail-item .label {
+  font-weight: bold;
+  color: #666;
+}
+
+.detail-item .value {
+  color: #333;
+}
+
 .cards-list {
   margin-top: 20px;
+}
+
+.cards-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+  padding: 10px;
+  background: #f8f9fa;
+  border-radius: 4px;
+  margin-bottom: 10px;
+  user-select: none;
+}
+
+.cards-header:hover {
+  background: #e9ecef;
+}
+
+.cards-header h4 {
+  margin: 0;
+}
+
+.toggle-icon {
+  font-size: 12px;
+  transition: transform 0.2s;
 }
 
 .cards-grid {

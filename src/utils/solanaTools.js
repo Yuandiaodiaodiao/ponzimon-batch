@@ -102,6 +102,71 @@ class AccountDecoder {
     }
   }
 
+  // Decode u128 (16 bytes, little endian)
+  decodeU128(buffer, offset) {
+    let low = 0n
+    let high = 0n
+    
+    // Read low 8 bytes
+    for (let i = 0; i < 8; i++) {
+      low = low | (BigInt(buffer[offset + i]) << BigInt(8 * i))
+    }
+    
+    // Read high 8 bytes
+    for (let i = 0; i < 8; i++) {
+      high = high | (BigInt(buffer[offset + 8 + i]) << BigInt(8 * i))
+    }
+    
+    const value = (high << 64n) | low
+    return {
+      value: value.toString(),
+      nextOffset: offset + 16
+    }
+  }
+
+  // Decode option type
+  decodeOption(buffer, offset, innerDecoder) {
+    const hasValue = buffer[offset]
+    if (hasValue === 0) {
+      return {
+        value: null,
+        nextOffset: offset + 1
+      }
+    } else {
+      const result = innerDecoder.call(this, buffer, offset + 1)
+      return {
+        value: result.value,
+        nextOffset: result.nextOffset
+      }
+    }
+  }
+
+  // Decode Farm structure
+  decodeFarm(buffer, offset) {
+    const farm = {}
+    let currentOffset = offset
+
+    // farm_type (u8 - 1 byte)
+    const farmType = this.decodeU8(buffer, currentOffset)
+    farm.farm_type = farmType.value
+    currentOffset = farmType.nextOffset
+
+    // total_cards (u8 - 1 byte)
+    const totalCards = this.decodeU8(buffer, currentOffset)
+    farm.total_cards = totalCards.value
+    currentOffset = totalCards.nextOffset
+
+    // berry_capacity (u64 - 8 bytes)
+    const berryCapacity = this.decodeU64(buffer, currentOffset)
+    farm.berry_capacity = berryCapacity.value
+    currentOffset = berryCapacity.nextOffset
+
+    return {
+      value: farm,
+      nextOffset: currentOffset
+    }
+  }
+
   // Decode Card structure
   decodeCard(buffer, offset) {
     const card = {}
@@ -135,25 +200,57 @@ class AccountDecoder {
 
   // Decode complete player data
   async decodePlayerData(accountData) {
-    // Skip discriminator (first 8 bytes) and go to cards section
-    // Player structure: discriminator(8) + owner(32) + farm(10) + cards(128*6)
+    const player = {}
     const discriminatorLength = 8
-    const ownerLength = 32
-    const farmLength = 10
     const dataWithoutDiscriminator = accountData.slice(discriminatorLength)
+    let currentOffset = 0
 
-    // Skip to cards section (offset 42: 32 bytes owner + 10 bytes farm)
-    let currentOffset = ownerLength + farmLength
+    // 1. owner (pubkey - 32 bytes)
+    const owner = this.decodePubkey(dataWithoutDiscriminator, currentOffset)
+    player.owner = owner.value
+    currentOffset = owner.nextOffset
 
-    // Decode 128 cards
+    // 2. farm (Farm structure - 10 bytes)
+    const farm = this.decodeFarm(dataWithoutDiscriminator, currentOffset)
+    player.farm = farm.value
+    currentOffset = farm.nextOffset
+
+    // 3. cards (128 cards)
     const cards = []
     for (let i = 0; i < 128; i++) {
       const card = this.decodeCard(dataWithoutDiscriminator, currentOffset)
       cards.push(card.value)
       currentOffset = card.nextOffset
     }
+    player.cards = cards
 
-    return cards
+    // 4. card_count (u8 - 1 byte)
+    const cardCount = this.decodeU8(dataWithoutDiscriminator, currentOffset)
+    player.card_count = cardCount.value
+    currentOffset = cardCount.nextOffset
+
+    // 5. staked_cards_bitset (u128 - 16 bytes)
+    const stakedCardsBitset = this.decodeU128(dataWithoutDiscriminator, currentOffset)
+    player.staked_cards_bitset = stakedCardsBitset.value
+    currentOffset = stakedCardsBitset.nextOffset
+
+    // 6. berries (u64 - 8 bytes)
+    const berries = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    player.berries = berries.value
+    currentOffset = berries.nextOffset
+
+    // 7. total_hashpower (u64 - 8 bytes)
+    const totalHashpower = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    player.total_hashpower = totalHashpower.value
+    currentOffset = totalHashpower.nextOffset
+
+    // 8. referrer (option pubkey)
+    const referrer = this.decodeOption(dataWithoutDiscriminator, currentOffset, this.decodePubkey)
+    player.referrer = referrer.value
+    currentOffset = referrer.nextOffset
+
+    // Return all decoded data
+    return player
   }
 }
 
@@ -651,21 +748,34 @@ export class SolanaWalletTools {
     }
   }
 
-  // Get user cards
-  async getUserCards() {
+  // Get user account info including cards and all player data
+  async getUserAccountInfo() {
     try {
       const accountInfo = await this.connection.getAccountInfo(this.playerPDA)
       if (!accountInfo) {
-        throw new Error('Player account not found')
+        // Account not initialized
+        return null
       }
 
       const decoder = new AccountDecoder(this.connection)
-      const cards = await decoder.decodePlayerData(accountInfo.data)
-      return cards
+      const playerData = await decoder.decodePlayerData(accountInfo.data)
+      
+      // Return full player data with cards
+      return {
+        initialized: true,
+        owner: playerData.owner,
+        farm: playerData.farm,
+        cards: playerData.cards.filter(card => card.id !== 0), // Filter out empty cards
+        cardCount: playerData.card_count,
+        stakedCardsBitset: playerData.staked_cards_bitset,
+        berries: playerData.berries,
+        totalHashpower: playerData.total_hashpower,
+        referrer: playerData.referrer
+      }
     } catch (error) {
-      console.error('Failed to get user cards:', error)
-      // Return empty array if there's an error instead of throwing
-      return []
+      console.error('Failed to get user account info:', error)
+      // Return null to indicate account not found/initialized
+      return null
     }
   }
 
