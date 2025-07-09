@@ -2,6 +2,9 @@
   <div class="solana-wallet-manager">
     <!-- Network Configuration -->
     <div class="network-config">
+      <span>测试服 https://ponzimon-farm-test.vercel.app/</span>
+      <span>领水 https://solfaucet.com/</span>
+      <span>领水2 https://faucet.solana.com//</span>
       <div class="preset-buttons">
         <button @click="applyPreset('devnet')" :class="{ active: currentNetwork === 'devnet' }">
           Devnet
