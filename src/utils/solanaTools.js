@@ -106,17 +106,17 @@ class AccountDecoder {
   decodeU128(buffer, offset) {
     let low = 0n
     let high = 0n
-    
+
     // Read low 8 bytes
     for (let i = 0; i < 8; i++) {
       low = low | (BigInt(buffer[offset + i]) << BigInt(8 * i))
     }
-    
+
     // Read high 8 bytes
     for (let i = 0; i < 8; i++) {
       high = high | (BigInt(buffer[offset + 8 + i]) << BigInt(8 * i))
     }
-    
+
     const value = (high << 64n) | low
     return {
       value: value.toString(),
@@ -267,12 +267,18 @@ export class SolanaWalletTools {
       throw new Error('Invalid private key')
     }
 
+    // Operation lock to prevent concurrent operations
+    this.operationLock = false
+    this.lockQueue = []
+
     // Initialize addresses
     this.programId = new PublicKey(config.programId)
     this.tokenMint = new PublicKey(config.tokenMint)
-    this.referrerWallet = new PublicKey(config.referrerWallet)
     this.feesWallet = new PublicKey(config.feesWallet)
     this.recipientAccount = new PublicKey(config.recipientAccount)
+
+    // Default referrer wallet (will be updated when account info is fetched)
+    this.referrerWallet = new PublicKey(config.referrerWallet || config.feesWallet)
 
     // Calculate PDAs
     const [globalState] = PublicKey.findProgramAddressSync(
@@ -319,10 +325,19 @@ export class SolanaWalletTools {
         this.tokenMint,
         this.feesWallet
       )
-      this.referrerTokenAccount = await getAssociatedTokenAddress(
-        this.tokenMint,
-        this.referrerWallet
-      )
+
+      // Initialize referrer token account (may be updated later)
+      try {
+        this.referrerTokenAccount = await getAssociatedTokenAddress(
+          this.tokenMint,
+          this.referrerWallet
+        )
+      } catch (error) {
+        console.warn('Failed to initialize referrer token account, will retry after fetching account info:', error)
+        // Use fees wallet as fallback
+        this.referrerTokenAccount = this.feesTokenAccount
+      }
+
       this.initialized = true
     } catch (error) {
       console.error('Failed to initialize token accounts:', error)
@@ -332,6 +347,37 @@ export class SolanaWalletTools {
   async ensureInitialized() {
     if (!this.initialized) {
       await this.initializeTokenAccounts()
+    }
+  }
+
+  // Lock mechanism to prevent concurrent operations
+  async acquireLock() {
+    return new Promise((resolve) => {
+      if (!this.operationLock) {
+        this.operationLock = true
+        resolve()
+      } else {
+        this.lockQueue.push(resolve)
+      }
+    })
+  }
+
+  releaseLock() {
+    this.operationLock = false
+    if (this.lockQueue.length > 0) {
+      const nextResolve = this.lockQueue.shift()
+      this.operationLock = true
+      nextResolve()
+    }
+  }
+
+  // Wrapper for locked operations
+  async withLock(operation) {
+    await this.acquireLock()
+    try {
+      return await operation()
+    } finally {
+      this.releaseLock()
     }
   }
 
@@ -529,22 +575,24 @@ export class SolanaWalletTools {
 
   // Initialize game account transaction
   async initGameAccountTransaction() {
-    await this.ensureInitialized()
+    return await this.withLock(async () => {
+      await this.ensureInitialized()
 
-    // Step 1: Purchase initial farm
-    const computeBudgetInstructions1 = createComputeBudgetInstructions()
-    computeBudgetInstructions1.push(await this.createPurchaseInitialFarmInstruction())
-    await this.buildAndSendTransaction(computeBudgetInstructions1)
+      // Step 1: Purchase initial farm
+      const computeBudgetInstructions1 = createComputeBudgetInstructions()
+      computeBudgetInstructions1.push(await this.createPurchaseInitialFarmInstruction())
+      await this.buildAndSendTransaction(computeBudgetInstructions1)
 
-    // Step 2: Stake card 0
-    const computeBudgetInstructions2 = createComputeBudgetInstructions()
-    computeBudgetInstructions2.push(await this.createStakeCardInstruction(0))
-    await this.buildAndSendTransaction(computeBudgetInstructions2)
+      // Step 2: Stake card 0
+      const computeBudgetInstructions2 = createComputeBudgetInstructions()
+      computeBudgetInstructions2.push(await this.createStakeCardInstruction(0))
+      await this.buildAndSendTransaction(computeBudgetInstructions2)
 
-    // Step 3: Stake card 1
-    const computeBudgetInstructions3 = createComputeBudgetInstructions()
-    computeBudgetInstructions3.push(await this.createStakeCardInstruction(1))
-    await this.buildAndSendTransaction(computeBudgetInstructions3)
+      // Step 3: Stake card 1
+      const computeBudgetInstructions3 = createComputeBudgetInstructions()
+      computeBudgetInstructions3.push(await this.createStakeCardInstruction(1))
+      await this.buildAndSendTransaction(computeBudgetInstructions3)
+    })
   }
 
   // Create open booster commit instruction
@@ -605,8 +653,14 @@ export class SolanaWalletTools {
       keys: accounts
     }
   }
-
+  async openBooster() {
+    return await this.withLock(async () => {
+      await this.executeOpenBoosterCommit();
+      await this.executeSettleOpenBooster();
+    })
+  }
   // Execute open booster commit
+  // private
   async executeOpenBoosterCommit() {
     await this.ensureInitialized()
     const computeBudgetInstructions = createComputeBudgetInstructions()
@@ -660,6 +714,7 @@ export class SolanaWalletTools {
   }
 
   // Execute settle open booster
+  // private
   async executeSettleOpenBooster() {
     await this.ensureInitialized()
     const computeBudgetInstructions = createComputeBudgetInstructions()
@@ -670,55 +725,57 @@ export class SolanaWalletTools {
 
   // Execute claim reward
   async executeClaimReward() {
-    await this.ensureInitialized()
-    const instructions = createComputeBudgetInstructions()
+    return await this.withLock(async () => {
+      await this.ensureInitialized()
+      const instructions = createComputeBudgetInstructions()
 
-    // Claim reward instruction
-    const claimRewardInstruction = new TransactionInstruction({
-      keys: [
-        { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },
-        { pubkey: this.playerPDA, isSigner: false, isWritable: true },
-        { pubkey: this.globalState, isSigner: false, isWritable: true },
-        { pubkey: this.rewardsVault, isSigner: false, isWritable: true },
-        { pubkey: this.playerTokenAccount, isSigner: false, isWritable: true },
-        { pubkey: this.tokenMint, isSigner: false, isWritable: true },
-        { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }
-      ],
-      programId: this.programId,
-      data: Buffer.from('0490844774179750', 'hex')
+      // Claim reward instruction
+      const claimRewardInstruction = new TransactionInstruction({
+        keys: [
+          { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },
+          { pubkey: this.playerPDA, isSigner: false, isWritable: true },
+          { pubkey: this.globalState, isSigner: false, isWritable: true },
+          { pubkey: this.rewardsVault, isSigner: false, isWritable: true },
+          { pubkey: this.playerTokenAccount, isSigner: false, isWritable: true },
+          { pubkey: this.tokenMint, isSigner: false, isWritable: true },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }
+        ],
+        programId: this.programId,
+        data: Buffer.from('0490844774179750', 'hex')
+      })
+      instructions.push(claimRewardInstruction)
+
+      await this.buildAndSendTransaction(instructions)
+
+      // Check token balance
+      const tokenBalance = await this.getTokenBalance()
+      if (tokenBalance <= 0) {
+        return false
+      }
+
+      // Transfer all tokens to recipient
+      const secondStepInstructions = createComputeBudgetInstructions()
+      const recipientAccountExists = await this.checkAccountExists(this.recipientTokenAccount)
+
+      if (!recipientAccountExists) {
+        console.log('Warning: Recipient token account does not exist, skipping transfer')
+        return false
+      }
+
+      const transferCheckedInstruction = createTransferCheckedInstruction(
+        this.playerTokenAccount,
+        this.tokenMint,
+        this.recipientTokenAccount,
+        this.wallet.publicKey,
+        tokenBalance,
+        await this.getTokenDecimals(),
+        [],
+        TOKEN_PROGRAM_ID
+      )
+      secondStepInstructions.push(transferCheckedInstruction)
+
+      return await this.buildAndSendTransaction(secondStepInstructions)
     })
-    instructions.push(claimRewardInstruction)
-
-    await this.buildAndSendTransaction(instructions)
-
-    // Check token balance
-    const tokenBalance = await this.getTokenBalance()
-    if (tokenBalance <= 0) {
-      return false
-    }
-
-    // Transfer all tokens to recipient
-    const secondStepInstructions = createComputeBudgetInstructions()
-    const recipientAccountExists = await this.checkAccountExists(this.recipientTokenAccount)
-
-    if (!recipientAccountExists) {
-      console.log('Warning: Recipient token account does not exist, skipping transfer')
-      return false
-    }
-
-    const transferCheckedInstruction = createTransferCheckedInstruction(
-      this.playerTokenAccount,
-      this.tokenMint,
-      this.recipientTokenAccount,
-      this.wallet.publicKey,
-      tokenBalance,
-      await this.getTokenDecimals(),
-      [],
-      TOKEN_PROGRAM_ID
-    )
-    secondStepInstructions.push(transferCheckedInstruction)
-
-    return await this.buildAndSendTransaction(secondStepInstructions)
   }
 
   // Get token balance
@@ -759,13 +816,42 @@ export class SolanaWalletTools {
 
       const decoder = new AccountDecoder(this.connection)
       const playerData = await decoder.decodePlayerData(accountInfo.data)
-      
-      // Return full player data with cards
+      console.log(playerData)
+
+      // Update referrer wallet if we have one from the account data
+      if (playerData.referrer) {
+        this.referrerWallet = new PublicKey(playerData.referrer)
+        // Reinitialize referrer token account with the new referrer
+        try {
+          this.referrerTokenAccount = await getAssociatedTokenAddress(
+            this.tokenMint,
+            this.referrerWallet
+          )
+        } catch (error) {
+          console.warn('Failed to update referrer token account:', error)
+        }
+      }
+
+      // Add staking status to cards based on bitset
+      const stakedCardsBitset = BigInt(playerData.staked_cards_bitset)
+      const cardsWithStakeStatus = playerData.cards.map((card, index) => {
+        if (card.id === 0) return card // Skip empty cards
+
+        // Check if this card position is staked using bitwise operation
+        const isStaked = (stakedCardsBitset & (1n << BigInt(index))) !== 0n
+
+        return {
+          ...card,
+          isStaked: isStaked
+        }
+      }).filter(card => card.id !== 0) // Filter out empty cards
+
+      // Return full player data with cards including stake status
       return {
         initialized: true,
         owner: playerData.owner,
         farm: playerData.farm,
-        cards: playerData.cards.filter(card => card.id !== 0), // Filter out empty cards
+        cards: cardsWithStakeStatus,
         cardCount: playerData.card_count,
         stakedCardsBitset: playerData.staked_cards_bitset,
         berries: playerData.berries,
@@ -873,23 +959,36 @@ export class SolanaWalletTools {
     }
   }
 
+  // Stake card
+  async stakeCard(cardIndex) {
+    return await this.withLock(async () => {
+      await this.ensureInitialized()
+      const computeBudgetInstructions = createComputeBudgetInstructions()
+      const stakeCardInstruction = await this.createStakeCardInstruction(cardIndex)
+      computeBudgetInstructions.push(stakeCardInstruction)
+      return await this.buildAndSendTransaction(computeBudgetInstructions)
+    })
+  }
+
   // Recycle card
   async recycleCard(cardIndex) {
-    await this.ensureInitialized()
+    return await this.withLock(async () => {
+      await this.ensureInitialized()
 
-    // Step 1: Recycle cards commit
-    const computeBudgetInstructions1 = createComputeBudgetInstructions()
-    const recycleCommitInstruction = await this.createRecycleCardsCommitInstruction([cardIndex])
-    computeBudgetInstructions1.push(recycleCommitInstruction)
-    await this.buildAndSendTransaction(computeBudgetInstructions1)
+      // Step 1: Recycle cards commit
+      const computeBudgetInstructions1 = createComputeBudgetInstructions()
+      const recycleCommitInstruction = await this.createRecycleCardsCommitInstruction([cardIndex])
+      computeBudgetInstructions1.push(recycleCommitInstruction)
+      await this.buildAndSendTransaction(computeBudgetInstructions1)
 
-    // Wait
-    await new Promise(resolve => setTimeout(resolve, 3000))
+      // Wait
+      await new Promise(resolve => setTimeout(resolve, 3000))
 
-    // Step 2: Recycle cards settle
-    const computeBudgetInstructions2 = createComputeBudgetInstructions()
-    const recycleSettleInstruction = await this.createRecycleCardsSettleInstruction()
-    computeBudgetInstructions2.push(recycleSettleInstruction)
-    return await this.buildAndSendTransaction(computeBudgetInstructions2)
+      // Step 2: Recycle cards settle
+      const computeBudgetInstructions2 = createComputeBudgetInstructions()
+      const recycleSettleInstruction = await this.createRecycleCardsSettleInstruction()
+      computeBudgetInstructions2.push(recycleSettleInstruction)
+      return await this.buildAndSendTransaction(computeBudgetInstructions2)
+    })
   }
 }
