@@ -306,6 +306,24 @@ export class WalletOperationManager extends WalletOperationBase {
   }
 
   /**
+   * 取消质押卡片
+   */
+  async unstakeCard(walletIndex, cardIndex) {
+    return await this.executeWalletOperation(
+      walletIndex,
+      WALLET_STATUS.UNSTAKING_CARD,
+      WALLET_STATUS.CARD_UNSTAKED,
+      async (tools) => {
+        return await tools.unstakeCard(cardIndex)
+      },
+      async (walletIndex) => {
+        // 取消质押后刷新卡片信息
+        await this.queryCards(walletIndex)
+      }
+    )
+  }
+
+  /**
    * 批量初始化游戏账户
    */
   async batchInitGameAccounts() {
@@ -458,6 +476,7 @@ export function useWalletOperations(wallets, config, saveWallets, addWallet) {
     claimReward: (index) => operationManager.claimReward(index),
     recycleCard: (walletIndex, cardIndex) => operationManager.recycleCard(walletIndex, cardIndex),
     stakeCard: (walletIndex, cardIndex) => operationManager.stakeCard(walletIndex, cardIndex),
+    unstakeCard: (walletIndex, cardIndex) => operationManager.unstakeCard(walletIndex, cardIndex),
     
     // 私钥导入
     importWalletByPrivateKey: (privateKey) => operationManager.importWalletByPrivateKey(privateKey),

@@ -1158,6 +1158,59 @@ export class SolanaWalletTools {
     }
   }
 
+  // Create unstake card instruction
+  async createUnstakeCardInstruction(cardIndex) {
+    const accounts = [
+      {
+        pubkey: this.wallet.publicKey,
+        isSigner: true,
+        isWritable: true
+      },
+      {
+        pubkey: this.playerPDA,
+        isSigner: false,
+        isWritable: true
+      },
+      {
+        pubkey: this.globalState,
+        isSigner: false,
+        isWritable: true
+      },
+      {
+        pubkey: this.rewardsVault,
+        isSigner: false,
+        isWritable: true
+      },
+      {
+        pubkey: this.tokenMint,
+        isSigner: false,
+        isWritable: false
+      },
+      {
+        pubkey: this.playerTokenAccount,
+        isSigner: false,
+        isWritable: true
+      },
+      {
+        pubkey: TOKEN_PROGRAM_ID,
+        isSigner: false,
+        isWritable: false
+      }
+    ]
+
+    // 使用正确的 unstake_card 指令标识符（从 Anchor 框架生成）
+    // unstake_card 的 Anchor 指令标识符: e4b29fb77701c5de
+    const instructionIdentifier = Buffer.from('e4b29fb77701c5de', 'hex')
+    const cardIndexByte = Buffer.from([cardIndex])
+    const instructionData = Buffer.concat([instructionIdentifier, cardIndexByte])
+
+    return {
+      programId: this.programId,
+      data: instructionData,
+      keys: accounts
+    }
+  }
+
   // Stake card
   async stakeCard(cardIndex) {
     return await this.withLock(async () => {
@@ -1165,6 +1218,17 @@ export class SolanaWalletTools {
       const computeBudgetInstructions = createComputeBudgetInstructions()
       const stakeCardInstruction = await this.createStakeCardInstruction(cardIndex)
       computeBudgetInstructions.push(stakeCardInstruction)
+      return await this.buildAndSendTransaction(computeBudgetInstructions)
+    })
+  }
+
+  // Unstake card
+  async unstakeCard(cardIndex) {
+    return await this.withLock(async () => {
+      await this.ensureInitialized()
+      const computeBudgetInstructions = createComputeBudgetInstructions()
+      const unstakeCardInstruction = await this.createUnstakeCardInstruction(cardIndex)
+      computeBudgetInstructions.push(unstakeCardInstruction)
       return await this.buildAndSendTransaction(computeBudgetInstructions)
     })
   }

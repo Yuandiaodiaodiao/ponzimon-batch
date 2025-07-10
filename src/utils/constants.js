@@ -50,7 +50,9 @@ export const WALLET_STATUS = {
   RECYCLING_CARD: 'Recycling card...',
   CARD_RECYCLED: 'Card recycled successfully',
   STAKING_CARD: 'Staking card...',
-  CARD_STAKED: 'Card staked successfully'
+  CARD_STAKED: 'Card staked successfully',
+  UNSTAKING_CARD: 'Unstaking card...',
+  CARD_UNSTAKED: 'Card unstaked successfully'
 }
 
 // 错误类型
@@ -76,6 +78,7 @@ export const DEFAULT_CONFIG = {
 export const INSTRUCTION_IDENTIFIERS = {
   PURCHASE_INITIAL_FARM: 'g1kRhvHV4V2',
   STAKE_CARD: '616fabbab3c644ac',
+  UNSTAKE_CARD: 'e4b29fb77701c5de',
   OPEN_BOOSTER_COMMIT: '07fc87dff2ecf25d',
   SETTLE_OPEN_BOOSTER: 'e490c7385edf09e2',
   CLAIM_REWARD: '0490844774179750',
