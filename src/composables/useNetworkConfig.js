@@ -13,15 +13,36 @@ export function useNetworkConfig() {
     referrerWallet: ''
   })
 
+  // 配置变更回调函数列表
+  const configChangeCallbacks = []
+
+  // 注册配置变更回调
+  const onConfigChange = (callback) => {
+    configChangeCallbacks.push(callback)
+  }
+
+  // 触发配置变更回调
+  const triggerConfigChangeCallbacks = () => {
+    configChangeCallbacks.forEach(callback => {
+      try {
+        callback(config)
+      } catch (error) {
+        console.error('Error in config change callback:', error)
+      }
+    })
+  }
+
   // 监听配置变化，自动保存
   watch(() => ({ ...config }), () => {
     console.log('config changed', config)
     saveConfig()
+    triggerConfigChangeCallbacks()
   }, { deep: true })
 
   // 监听网络变化，自动保存
   watch(currentNetwork, () => {
     saveConfig()
+    triggerConfigChangeCallbacks()
   })
 
   /**
@@ -131,6 +152,7 @@ export function useNetworkConfig() {
     applyPreset,
     validateCurrentConfig,
     getAvailableNetworks,
-    isValidNetwork
+    isValidNetwork,
+    onConfigChange
   }
 }

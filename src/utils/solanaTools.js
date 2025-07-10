@@ -12,7 +12,8 @@ import {
   getAssociatedTokenAddress,
   TOKEN_PROGRAM_ID,
   ASSOCIATED_TOKEN_PROGRAM_ID,
-  createTransferCheckedInstruction
+  createTransferCheckedInstruction,
+  createAssociatedTokenAccountInstruction
 } from '@solana/spl-token'
 import bs58 from 'bs58'
 import { Buffer } from 'node:buffer';
@@ -933,9 +934,16 @@ export class SolanaWalletTools {
       const secondStepInstructions = createComputeBudgetInstructions()
       const recipientAccountExists = await this.checkAccountExists(this.recipientTokenAccount)
 
+      // If recipient account doesn't exist, create it first
       if (!recipientAccountExists) {
-        console.log('Warning: Recipient token account does not exist, skipping transfer')
-        return false
+        console.log('Creating recipient ATA for claim reward...')
+        const createATAInstruction = createAssociatedTokenAccountInstruction(
+          this.wallet.publicKey,      // payer
+          this.recipientTokenAccount, // ata
+          this.recipientAccount,      // owner
+          this.tokenMint             // mint
+        )
+        secondStepInstructions.push(createATAInstruction)
       }
 
       const transferCheckedInstruction = createTransferCheckedInstruction(
@@ -1252,13 +1260,21 @@ export class SolanaWalletTools {
         
         // Check if recipient account exists
         const recipientExists = await this.checkAccountExists(this.recipientTokenAccount)
-        if (!recipientExists) {
-          console.log('Warning: Recipient token account does not exist')
-          throw new Error('Recipient token account does not exist')
-        }
         
         // Create transfer instruction
         const transferInstructions = createComputeBudgetInstructions()
+        
+        // If recipient account doesn't exist, create it first
+        if (!recipientExists) {
+          console.log('Creating recipient ATA...')
+          const createATAInstruction = createAssociatedTokenAccountInstruction(
+            this.wallet.publicKey,      // payer
+            this.recipientTokenAccount, // ata
+            this.recipientAccount,      // owner
+            this.tokenMint             // mint
+          )
+          transferInstructions.push(createATAInstruction)
+        }
         
         const transferCheckedInstruction = createTransferCheckedInstruction(
           this.playerTokenAccount,     // from

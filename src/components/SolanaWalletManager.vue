@@ -314,7 +314,8 @@ export default {
       currentNetwork, 
       config, 
       loadConfig, 
-      applyPreset 
+      applyPreset,
+      onConfigChange 
     } = useNetworkConfig()
     
     // Wallet storage
@@ -772,6 +773,47 @@ export default {
       }
     }
     
+    // Reinitialize all wallets with new config
+    const reinitializeAllWallets = async (newConfig) => {
+      console.log('Reinitializing all wallets with new config:', newConfig)
+      
+      if (!newConfig.rpcUrl) {
+        console.log('No RPC URL in new config, skipping reinitialization')
+        return
+      }
+      
+      for (let index = 0; index < wallets.value.length; index++) {
+        const wallet = wallets.value[index]
+        if (wallet.privateKey) {
+          try {
+            console.log(`Reinitializing wallet ${index + 1}`)
+            
+            // Clear current status
+            wallet.status = 'Updating configuration...'
+            wallet.loading = true
+            wallet.tools = null
+            wallet.firstQueryDone = false
+            wallet.accountInitialized = false
+            wallet.accountInfo = null
+            wallet.cards = []
+            wallet.tokenBalance = '0'
+            wallet.solBalance = 0
+            
+            // Reinitialize with new config
+            await initializeWallet(index)
+            
+          } catch (error) {
+            console.error(`Failed to reinitialize wallet ${index + 1}:`, error)
+            wallet.status = `Config update failed: ${error.message}`
+            wallet.loading = false
+            wallet.firstQueryDone = true
+          }
+        }
+      }
+      
+      console.log('All wallets reinitialized')
+    }
+    
     // Initialize on mount
     onMounted(async () => {
       try {
@@ -784,6 +826,9 @@ export default {
           console.log('No RPC URL found, applying devnet preset')
           applyPreset('devnet')
         }
+        
+        // Register config change callback
+        onConfigChange(reinitializeAllWallets)
         
         console.log('Loading existing wallets...')
         const loadedWallets = loadWallets(config)
