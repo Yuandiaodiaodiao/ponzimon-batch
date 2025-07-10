@@ -17,6 +17,54 @@ import {
 import bs58 from 'bs58'
 import { Buffer } from 'node:buffer';
 
+// Query GlobalState function (standalone, not part of SolanaWalletTools)
+export async function queryGlobalState(config) {
+  try {
+    console.log('Querying global state with config:', config)
+    
+    if (!config || !config.rpcUrl || !config.programId || !config.tokenMint) {
+      throw new Error('Missing required config parameters for global state query')
+    }
+
+    // Create connection
+    const connection = new Connection(config.rpcUrl, 'confirmed')
+    
+    // Calculate global state PDA
+    const programId = new PublicKey(config.programId)
+    const tokenMint = new PublicKey(config.tokenMint)
+    
+    const [globalStatePDA] = PublicKey.findProgramAddressSync(
+      [Buffer.from("global_state"), tokenMint.toBuffer()],
+      programId
+    )
+    
+    console.log('Global state PDA:', globalStatePDA.toBase58())
+    
+    // Fetch account info
+    const accountInfo = await connection.getAccountInfo(globalStatePDA)
+    
+    if (!accountInfo) {
+      console.log('Global state account not found')
+      return null
+    }
+    
+    console.log('Global state account found, decoding data...')
+    
+    // Decode global state data
+    const decoder = new AccountDecoder(connection)
+    const globalState = await decoder.decodeGlobalState(accountInfo.data)
+    
+    console.log('Global state decoded successfully')
+    
+    return {
+      ...globalState,
+      pda: globalStatePDA.toBase58()
+    }
+  } catch (error) {
+    console.error('Failed to query global state:', error)
+    throw error
+  }
+}
 
 // Create compute budget instructions helper
 const createComputeBudgetInstructions = () => {
@@ -251,6 +299,196 @@ class AccountDecoder {
 
     // Return all decoded data
     return player
+  }
+
+  // Decode GlobalState data
+  async decodeGlobalState(accountData) {
+    const globalState = {}
+    const discriminatorLength = 8
+    const dataWithoutDiscriminator = accountData.slice(discriminatorLength)
+    let currentOffset = 0
+
+    // authority (pubkey - 32 bytes)
+    const authority = this.decodePubkey(dataWithoutDiscriminator, currentOffset)
+    globalState.authority = authority.value
+    currentOffset = authority.nextOffset
+
+    // token_mint (pubkey - 32 bytes)
+    const tokenMint = this.decodePubkey(dataWithoutDiscriminator, currentOffset)
+    globalState.token_mint = tokenMint.value
+    currentOffset = tokenMint.nextOffset
+
+    // fees_wallet (pubkey - 32 bytes)
+    const feesWallet = this.decodePubkey(dataWithoutDiscriminator, currentOffset)
+    globalState.fees_wallet = feesWallet.value
+    currentOffset = feesWallet.nextOffset
+
+    // total_supply (u64 - 8 bytes)
+    const totalSupply = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_supply = totalSupply.value
+    currentOffset = totalSupply.nextOffset
+
+    // burned_tokens (u64 - 8 bytes)
+    const burnedTokens = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.burned_tokens = burnedTokens.value
+    currentOffset = burnedTokens.nextOffset
+
+    // cumulative_rewards (u64 - 8 bytes)
+    const cumulativeRewards = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.cumulative_rewards = cumulativeRewards.value
+    currentOffset = cumulativeRewards.nextOffset
+
+    // start_slot (u64 - 8 bytes)
+    const startSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.start_slot = startSlot.value
+    currentOffset = startSlot.nextOffset
+
+    // reward_rate (u64 - 8 bytes)
+    const rewardRate = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.reward_rate = rewardRate.value
+    currentOffset = rewardRate.nextOffset
+
+    // acc_tokens_per_hashpower (u128 - 16 bytes)
+    const accTokensPerHashpower = this.decodeU128(dataWithoutDiscriminator, currentOffset)
+    globalState.acc_tokens_per_hashpower = accTokensPerHashpower.value
+    currentOffset = accTokensPerHashpower.nextOffset
+
+    // last_reward_slot (u64 - 8 bytes)
+    const lastRewardSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.last_reward_slot = lastRewardSlot.value
+    currentOffset = lastRewardSlot.nextOffset
+
+    // burn_rate (u8 - 1 byte)
+    const burnRate = this.decodeU8(dataWithoutDiscriminator, currentOffset)
+    globalState.burn_rate = burnRate.value
+    currentOffset = burnRate.nextOffset
+
+    // referral_fee (u8 - 1 byte)
+    const referralFee = this.decodeU8(dataWithoutDiscriminator, currentOffset)
+    globalState.referral_fee = referralFee.value
+    currentOffset = referralFee.nextOffset
+
+    // production_enabled (bool - 1 byte)
+    const productionEnabled = this.decodeU8(dataWithoutDiscriminator, currentOffset)
+    globalState.production_enabled = productionEnabled.value === 1
+    currentOffset = productionEnabled.nextOffset
+
+    // cooldown_slots (u64 - 8 bytes)
+    const cooldownSlots = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.cooldown_slots = cooldownSlots.value
+    currentOffset = cooldownSlots.nextOffset
+
+    // dust_threshold_divisor (u64 - 8 bytes)
+    const dustThresholdDivisor = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.dust_threshold_divisor = dustThresholdDivisor.value
+    currentOffset = dustThresholdDivisor.nextOffset
+
+    // initial_farm_purchase_fee_lamports (u64 - 8 bytes)
+    const initialFarmPurchaseFeeLamports = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.initial_farm_purchase_fee_lamports = initialFarmPurchaseFeeLamports.value
+    currentOffset = initialFarmPurchaseFeeLamports.nextOffset
+
+    // booster_pack_cost_microtokens (u64 - 8 bytes)
+    const boosterPackCostMicrotokens = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.booster_pack_cost_microtokens = boosterPackCostMicrotokens.value
+    currentOffset = boosterPackCostMicrotokens.nextOffset
+
+    // gamble_fee_lamports (u64 - 8 bytes)
+    const gambleFeeLamports = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.gamble_fee_lamports = gambleFeeLamports.value
+    currentOffset = gambleFeeLamports.nextOffset
+
+    // total_berries (u64 - 8 bytes)
+    const totalBerries = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_berries = totalBerries.value
+    currentOffset = totalBerries.nextOffset
+
+    // total_hashpower (u64 - 8 bytes)
+    const totalHashpower = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_hashpower = totalHashpower.value
+    currentOffset = totalHashpower.nextOffset
+
+    // total_global_gambles (u64 - 8 bytes)
+    const totalGlobalGambles = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_global_gambles = totalGlobalGambles.value
+    currentOffset = totalGlobalGambles.nextOffset
+
+    // total_global_gamble_wins (u64 - 8 bytes)
+    const totalGlobalGambleWins = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_global_gamble_wins = totalGlobalGambleWins.value
+    currentOffset = totalGlobalGambleWins.nextOffset
+
+    // total_booster_packs_opened (u64 - 8 bytes)
+    const totalBoosterPacksOpened = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_booster_packs_opened = totalBoosterPacksOpened.value
+    currentOffset = totalBoosterPacksOpened.nextOffset
+
+    // total_card_recycling_attempts (u64 - 8 bytes)
+    const totalCardRecyclingAttempts = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_card_recycling_attempts = totalCardRecyclingAttempts.value
+    currentOffset = totalCardRecyclingAttempts.nextOffset
+
+    // total_successful_card_recycling (u64 - 8 bytes)
+    const totalSuccessfulCardRecycling = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_successful_card_recycling = totalSuccessfulCardRecycling.value
+    currentOffset = totalSuccessfulCardRecycling.nextOffset
+
+    // total_staked_tokens (u64 - 8 bytes)
+    const totalStakedTokens = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_staked_tokens = totalStakedTokens.value
+    currentOffset = totalStakedTokens.nextOffset
+
+    // staking_lockup_slots (u64 - 8 bytes)
+    const stakingLockupSlots = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.staking_lockup_slots = stakingLockupSlots.value
+    currentOffset = stakingLockupSlots.nextOffset
+
+    // acc_sol_rewards_per_token (u128 - 16 bytes)
+    const accSolRewardsPerToken = this.decodeU128(dataWithoutDiscriminator, currentOffset)
+    globalState.acc_sol_rewards_per_token = accSolRewardsPerToken.value
+    currentOffset = accSolRewardsPerToken.nextOffset
+
+    // acc_token_rewards_per_token (u128 - 16 bytes)
+    const accTokenRewardsPerToken = this.decodeU128(dataWithoutDiscriminator, currentOffset)
+    globalState.acc_token_rewards_per_token = accTokenRewardsPerToken.value
+    currentOffset = accTokenRewardsPerToken.nextOffset
+
+    // last_staking_reward_slot (u64 - 8 bytes)
+    const lastStakingRewardSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.last_staking_reward_slot = lastStakingRewardSlot.value
+    currentOffset = lastStakingRewardSlot.nextOffset
+
+    // token_reward_rate (u64 - 8 bytes)
+    const tokenRewardRate = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.token_reward_rate = tokenRewardRate.value
+    currentOffset = tokenRewardRate.nextOffset
+
+    // total_sol_deposited (u64 - 8 bytes)
+    const totalSolDeposited = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.total_sol_deposited = totalSolDeposited.value
+    currentOffset = totalSolDeposited.nextOffset
+
+    // reward_rate_multiplier (u64 - 8 bytes)
+    const rewardRateMultiplier = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.reward_rate_multiplier = rewardRateMultiplier.value
+    currentOffset = rewardRateMultiplier.nextOffset
+
+    // last_rate_update_slot (u64 - 8 bytes)
+    const lastRateUpdateSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    globalState.last_rate_update_slot = lastRateUpdateSlot.value
+    currentOffset = lastRateUpdateSlot.nextOffset
+
+    // rewards_vault (pubkey - 32 bytes)
+    const rewardsVault = this.decodePubkey(dataWithoutDiscriminator, currentOffset)
+    globalState.rewards_vault = rewardsVault.value
+    currentOffset = rewardsVault.nextOffset
+
+    // padding (32 bytes)
+    const padding = dataWithoutDiscriminator.slice(currentOffset, currentOffset + 32)
+    globalState.padding = Array.from(padding)
+    currentOffset += 32
+
+    return globalState
   }
 }
 
@@ -667,24 +905,64 @@ export class SolanaWalletTools {
   }
 
   // Initialize game account transaction
-  async initGameAccountTransaction() {
+  async initGameAccountTransaction(strategy = null) {
     return await this.withLock(async () => {
       await this.ensureInitialized()
 
-      // Step 1: Purchase initial farm
-      const computeBudgetInstructions1 = createComputeBudgetInstructions()
-      computeBudgetInstructions1.push(await this.createPurchaseInitialFarmInstruction())
-      await this.buildAndSendTransaction(computeBudgetInstructions1)
+      // Get strategy from parameter or default to 'stake_12'
+      const selectedStrategy = strategy || 'stake_12'
+      console.log('Using farm strategy:', selectedStrategy)
+      try{
+          // Step 1: Purchase initial farm
+          console.log('Step 1: Purchasing initial farm...')
+          const computeBudgetInstructions1 = createComputeBudgetInstructions()
+          computeBudgetInstructions1.push(await this.createPurchaseInitialFarmInstruction())
+          await this.buildAndSendTransaction(computeBudgetInstructions1)
 
-      // Step 2: Stake card 0
-      const computeBudgetInstructions2 = createComputeBudgetInstructions()
-      computeBudgetInstructions2.push(await this.createStakeCardInstruction(0))
-      await this.buildAndSendTransaction(computeBudgetInstructions2)
+      }catch(error){
+        console.error('Failed to purchase initial farm:', error)
+      }
+     
 
-      // Step 3: Stake card 1
-      const computeBudgetInstructions3 = createComputeBudgetInstructions()
-      computeBudgetInstructions3.push(await this.createStakeCardInstruction(1))
-      await this.buildAndSendTransaction(computeBudgetInstructions3)
+      if (selectedStrategy === 'stake_12') {
+        // Strategy 1: 开户+质押1 2
+        console.log('Executing strategy: 开户+质押1 2')
+        
+        // Step 2: Stake card 0 (ID 1)
+        console.log('Step 2: Staking card 0 (ID 1)...')
+        await this.stakeCardWithoutLock(0)
+
+        // Wait between stakes
+
+        // Step 3: Stake card 1 (ID 2)
+        console.log('Step 3: Staking card 1 (ID 2)...')
+        await this.stakeCardWithoutLock(1)
+
+      } else if (selectedStrategy === 'stake_recycle_stake') {
+        console.log('质押 0')
+        await this.stakeCardWithoutLock(0)
+        console.log('回收1')
+        await this.recycleCardWithoutLock(2)
+
+        let accountInfo = await this.getUserAccountInfo()
+        
+        if (!accountInfo || !accountInfo.cards) {
+          console.error('Failed to get account info after recycling')
+          await this.stakeCardWithoutLock(1)
+          return
+        }
+        const card12Index = accountInfo.cards.findIndex(card => card.rarity === 1)
+        if(card12Index>=0){
+          console.log('质押2 回收1')
+          await this.stakeCardWithoutLock(2)
+          await this.recycleCardWithoutLock(1)
+        } else {
+          console.log('质押1')
+          await this.stakeCardWithoutLock(1)
+        }
+      }
+
+      console.log('Farm initialization strategy completed successfully!')
     })
   }
 
@@ -826,7 +1104,7 @@ export class SolanaWalletTools {
       await this.executeOpenBoosterCommit()
       
       // Wait a bit between steps
-      await new Promise(resolve => setTimeout(resolve, 2000))
+      await new Promise(resolve => setTimeout(resolve, 500))
       
       // Step 2: Execute settle open booster
       console.log('Step 2: Executing settle open booster...')
@@ -900,7 +1178,7 @@ export class SolanaWalletTools {
   }
 
   // Execute claim reward
-  async executeClaimReward() {
+  async executeClaimReward(execTransfer=false) {
     return await this.withLock(async () => {
       await this.ensureInitialized()
       const instructions = createComputeBudgetInstructions()
@@ -922,7 +1200,9 @@ export class SolanaWalletTools {
       instructions.push(claimRewardInstruction)
 
       await this.buildAndSendTransaction(instructions)
-
+      if(!execTransfer){
+        return true
+      }
       // Check token balance
       const tokenBalance = await this.getTokenBalance()
       if (tokenBalance <= 0) {
@@ -1211,14 +1491,17 @@ export class SolanaWalletTools {
     }
   }
 
+  async stakeCardWithoutLock(cardIndex) {
+    await this.ensureInitialized()
+    const computeBudgetInstructions = createComputeBudgetInstructions()
+    const stakeCardInstruction = await this.createStakeCardInstruction(cardIndex)
+    computeBudgetInstructions.push(stakeCardInstruction)
+    return await this.buildAndSendTransaction(computeBudgetInstructions)
+  }
   // Stake card
   async stakeCard(cardIndex) {
     return await this.withLock(async () => {
-      await this.ensureInitialized()
-      const computeBudgetInstructions = createComputeBudgetInstructions()
-      const stakeCardInstruction = await this.createStakeCardInstruction(cardIndex)
-      computeBudgetInstructions.push(stakeCardInstruction)
-      return await this.buildAndSendTransaction(computeBudgetInstructions)
+      await this.stakeCardWithoutLock(cardIndex)
     })
   }
 
@@ -1235,6 +1518,9 @@ export class SolanaWalletTools {
 
   // Transfer all tokens to recipient account
   async transferAllTokensToRecipient() {
+    if(this.wallet.publicKey.toBase58() === this.recipientAccount.toBase58()) {
+      return true
+    }
     return await this.withLock(async () => {
       try {
         await this.ensureInitialized()
@@ -1291,25 +1577,97 @@ export class SolanaWalletTools {
     })
   }
 
+  // Transfer specific amount of tokens to another wallet
+  async transferTokensToWallet(targetPublicKey, amount) {
+    return await this.withLock(async () => {
+      try {
+        await this.ensureInitialized()
+        
+        console.log('Starting token transfer to wallet:', targetPublicKey, 'amount:', amount.toString())
+        
+        // Check current token balance
+        const tokenBalance = await this.getTokenBalance()
+        console.log('Current token balance:', tokenBalance.toString())
+        
+        if (tokenBalance <= 0) {
+          console.log('No tokens to transfer')
+          return false
+        }
+        
+        if (amount > tokenBalance) {
+          console.log('Insufficient balance for transfer')
+          throw new Error('Insufficient token balance')
+        }
+        
+        // Get target wallet's token account
+        const targetTokenAccount = await getAssociatedTokenAddress(
+          this.tokenMint,
+          new PublicKey(targetPublicKey)
+        )
+        
+        // Check if target account exists
+        const targetExists = await this.checkAccountExists(targetTokenAccount)
+        if (!targetExists) {
+          console.log('Warning: Target token account does not exist')
+          throw new Error('Target token account does not exist')
+        }
+        
+        // Create transfer instruction
+        const transferInstructions = createComputeBudgetInstructions()
+        
+        const transferCheckedInstruction = createTransferCheckedInstruction(
+          this.playerTokenAccount,     // from
+          this.tokenMint,              // mint
+          targetTokenAccount,          // to
+          this.wallet.publicKey,       // owner
+          amount,                      // amount
+          await this.getTokenDecimals(), // decimals
+          [],                          // signers
+          TOKEN_PROGRAM_ID
+        )
+        
+        transferInstructions.push(transferCheckedInstruction)
+        
+        console.log('Executing token transfer transaction...')
+        const result = await this.buildAndSendTransaction(transferInstructions)
+        
+        if (result) {
+          console.log('Token transfer successful:', result)
+          return true
+        } else {
+          console.log('Token transfer failed')
+          return false
+        }
+        
+      } catch (error) {
+        console.error('Token transfer error:', error)
+        throw error
+      }
+    })
+  }
+
+  async recycleCardWithoutLock(cardIndex) {
+    await this.ensureInitialized()
+
+    // Step 1: Recycle cards commit
+    const computeBudgetInstructions1 = createComputeBudgetInstructions()
+    const recycleCommitInstruction = await this.createRecycleCardsCommitInstruction([cardIndex])
+    computeBudgetInstructions1.push(recycleCommitInstruction)
+    await this.buildAndSendTransaction(computeBudgetInstructions1)
+
+    // Wait
+    await new Promise(resolve => setTimeout(resolve, 500))
+
+    // Step 2: Recycle cards settle
+    const computeBudgetInstructions2 = createComputeBudgetInstructions()
+    const recycleSettleInstruction = await this.createRecycleCardsSettleInstruction()
+    computeBudgetInstructions2.push(recycleSettleInstruction)
+    return await this.buildAndSendTransaction(computeBudgetInstructions2)
+  }
   // Recycle card
   async recycleCard(cardIndex) {
     return await this.withLock(async () => {
-      await this.ensureInitialized()
-
-      // Step 1: Recycle cards commit
-      const computeBudgetInstructions1 = createComputeBudgetInstructions()
-      const recycleCommitInstruction = await this.createRecycleCardsCommitInstruction([cardIndex])
-      computeBudgetInstructions1.push(recycleCommitInstruction)
-      await this.buildAndSendTransaction(computeBudgetInstructions1)
-
-      // Wait
-      await new Promise(resolve => setTimeout(resolve, 3000))
-
-      // Step 2: Recycle cards settle
-      const computeBudgetInstructions2 = createComputeBudgetInstructions()
-      const recycleSettleInstruction = await this.createRecycleCardsSettleInstruction()
-      computeBudgetInstructions2.push(recycleSettleInstruction)
-      return await this.buildAndSendTransaction(computeBudgetInstructions2)
+      await this.recycleCardWithoutLock(cardIndex)
     })
   }
 
@@ -1321,6 +1679,168 @@ export class SolanaWalletTools {
     } catch (error) {
       console.error('Failed to get SOL balance:', error)
       return 0
+    }
+  }
+
+  // Transfer SOL to another wallet
+  async transferSolToWallet(targetPublicKey, amountSol) {
+    return await this.withLock(async () => {
+      try {
+        await this.ensureInitialized()
+        
+        console.log('Starting SOL transfer to wallet:', targetPublicKey, 'amount:', amountSol)
+        
+        // Convert SOL to lamports
+        const amountLamports = Math.floor(amountSol * 1000000000)
+        
+        // Check current SOL balance
+        const currentBalance = await this.connection.getBalance(this.wallet.publicKey)
+        console.log('Current SOL balance (lamports):', currentBalance)
+        
+        if (currentBalance <= 0) {
+          console.log('No SOL to transfer')
+          return false
+        }
+        
+        // Reserve some SOL for transaction fees (0.001 SOL = 1,000,000 lamports)
+        const reservedForFees = 1000000
+        const availableBalance = currentBalance - reservedForFees
+        
+        if (amountLamports > availableBalance) {
+          console.log('Insufficient SOL balance for transfer (including fees)')
+          throw new Error('Insufficient SOL balance (need to reserve for transaction fees)')
+        }
+        
+        // Create SOL transfer instruction
+        const transferInstructions = createComputeBudgetInstructions()
+        
+        const transferInstruction = SystemProgram.transfer({
+          fromPubkey: this.wallet.publicKey,
+          toPubkey: new PublicKey(targetPublicKey),
+          lamports: amountLamports
+        })
+        
+        transferInstructions.push(transferInstruction)
+        
+        console.log('Executing SOL transfer transaction...')
+        const result = await this.buildAndSendTransaction(transferInstructions)
+        
+        if (result) {
+          console.log('SOL transfer successful:', result)
+          return true
+        } else {
+          console.log('SOL transfer failed')
+          return false
+        }
+        
+      } catch (error) {
+        console.error('SOL transfer error:', error)
+        throw error
+      }
+    })
+  }
+
+  // Calculate pending rewards based on accumulated reward rates
+  async getPendingRewards() {
+    try {
+      console.log('Calculating pending rewards...')
+      
+      // Get current user account info
+      const accountInfo = await this.getUserAccountInfo()
+      if (!accountInfo) {
+        console.log('Account not initialized, no pending rewards')
+        return { success: true, rewards: 0 }
+      }
+
+      // Get global state for current accumulated tokens per hashpower
+      const globalState = await queryGlobalState(this.config)
+      if (!globalState) {
+        console.log('Global state not available, cannot calculate pending rewards')
+        return { success: false, rewards: 0 }
+      }
+
+      // Get current slot
+      const currentSlot = await this.connection.getSlot('confirmed')
+      
+      // Extract variables following the original algorithm
+      const totalHashpower = BigInt(accountInfo.totalHashpower || '0') // p
+      const lastAccTokensPerHashpower = BigInt(accountInfo.lastAccTokensPerHashpower || '0') // f - not in our struct, using 0
+      const lastClaimSlot = BigInt(accountInfo.lastClaimSlot || globalState.start_slot) // b - not in our struct, using start_slot as fallback
+      
+      const currentSlotBN = BigInt(currentSlot) // g
+      const globalAccTokensPerHashpower = BigInt(globalState.acc_tokens_per_hashpower) // h
+      const dustThresholdDivisor = BigInt(globalState.dust_threshold_divisor) // n
+      const totalSupply = BigInt(globalState.total_supply) // d
+      const burnedTokens = BigInt(globalState.burned_tokens) // m
+      const cumulativeRewards = BigInt(globalState.cumulative_rewards) // u
+      
+      console.log('Pending rewards calculation variables:', {
+        totalHashpower: totalHashpower.toString(),
+        lastAccTokensPerHashpower: lastAccTokensPerHashpower.toString(),
+        lastClaimSlot: lastClaimSlot.toString(),
+        currentSlot: currentSlot,
+        globalAccTokensPerHashpower: globalAccTokensPerHashpower.toString(),
+        dustThresholdDivisor: dustThresholdDivisor.toString(),
+        totalSupply: totalSupply.toString(),
+        burnedTokens: burnedTokens.toString(),
+        cumulativeRewards: cumulativeRewards.toString()
+      })
+
+      // If current slot is less than or equal to last claim slot, no rewards
+      if (currentSlotBN <= lastClaimSlot) {
+        console.log('Current slot <= last claim slot, no pending rewards')
+        return { success: true, rewards: 0 }
+      }
+
+      // Calculate reward difference
+      const rewardDifference = globalAccTokensPerHashpower - lastAccTokensPerHashpower // v
+      
+      // If reward difference is negative, no rewards
+      if (rewardDifference < 0n) {
+        console.log('Reward difference is negative, no pending rewards')
+        return { success: true, rewards: 0 }
+      }
+
+      // Calculate base reward amount
+      let rewardAmount = totalHashpower * rewardDifference // j
+      
+      // Apply dust threshold divisor
+      rewardAmount = rewardAmount / dustThresholdDivisor // N
+      
+      // Calculate available supply for rewards
+      const availableSupply = totalSupply - burnedTokens // k
+      const maxRewardable = cumulativeRewards - availableSupply // A - this seems wrong in original, should be availableSupply - cumulativeRewards
+      const actualMaxRewardable = availableSupply - cumulativeRewards // Corrected calculation
+      
+      // Cap reward amount to available supply
+      if (rewardAmount > actualMaxRewardable && actualMaxRewardable > 0n) {
+        rewardAmount = actualMaxRewardable
+      }
+      
+      // Convert to readable format (6 decimals)
+      const rewardAmountReadable = Number(rewardAmount) / 1000000
+      
+      console.log('Pending rewards calculation result:', {
+        rewardDifference: rewardDifference.toString(),
+        baseRewardAmount: (totalHashpower * rewardDifference).toString(),
+        finalRewardAmount: rewardAmount.toString(),
+        rewardAmountReadable: rewardAmountReadable,
+        availableSupply: availableSupply.toString(),
+        actualMaxRewardable: actualMaxRewardable.toString()
+      })
+
+      return {
+        success: true,
+        rewards: Math.max(0, rewardAmountReadable) // Ensure non-negative
+      }
+      
+    } catch (error) {
+      console.error('Failed to calculate pending rewards:', error)
+      return {
+        success: false,
+        rewards: 0,
+        error: error.message
+      }
     }
   }
 }

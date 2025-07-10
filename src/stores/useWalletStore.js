@@ -1,18 +1,37 @@
-import { ref, watch } from 'vue'
+import { defineStore } from 'pinia'
+import { ref, watch, computed } from 'vue'
 import { Keypair } from '@solana/web3.js'
 import bs58 from 'bs58'
 import { SolanaWalletTools } from '../utils/solanaTools.js'
 import { STORAGE_KEYS, WALLET_STATUS, FILE_SIZE_LIMITS } from '../utils/constants.js'
 import { StorageHelper, Validator, deepClone } from '../utils/helpers.js'
 
-export function useWalletStorage() {
+export const useWalletStore = defineStore('wallet', () => {
+  // State
   const wallets = ref([])
+  
+  // Store pending rewards data
+  const pendingRewards = ref(new Map()) // Map<walletIndex, rewardAmount>
 
-  // 监听钱包变化，自动保存（但排除 tools 属性）
-  watch(wallets, () => {
-    saveWallets()
-  }, { deep: true })
+  // Computed
+  const totalPendingRewards = computed(() => {
+    let total = 0
+    for (const [walletIndex, rewardAmount] of pendingRewards.value) {
+      if (typeof rewardAmount === 'number' && rewardAmount > 0) {
+        total += rewardAmount
+      }
+    }
+    return total
+  })
 
+  const formattedTotalPendingRewards = computed(() => {
+    return Number(totalPendingRewards.value).toLocaleString('en-US', {
+      minimumFractionDigits: 3,
+      maximumFractionDigits: 6
+    })
+  })
+
+  // Actions
   /**
    * 创建默认的钱包对象
    */
@@ -30,7 +49,8 @@ export function useWalletStorage() {
       accountInfo: null,
       firstQueryDone: false,
       showFullPublicKey: false, // 默认不显示完整公钥
-      tokenBalance: '0' // 代币余额
+      tokenBalance: '0', // 代币余额
+      solBalance: '0' // SOL余额
     }
   }
 
@@ -184,6 +204,12 @@ export function useWalletStorage() {
    */
   const clearAllWallets = () => {
     try {
+      const confirmed = confirm(`确认清空所有钱包?\n\n当前有 ${wallets.value.length} 个钱包\n\n此操作无法撤销！`)
+      
+      if (!confirmed) {
+        return false
+      }
+
       // 清理所有工具资源
       wallets.value.forEach(wallet => {
         if (wallet.tools) {
@@ -192,6 +218,7 @@ export function useWalletStorage() {
       })
 
       wallets.value = []
+      return true
     } catch (error) {
       console.error('Failed to clear wallets:', error)
       throw error
@@ -320,8 +347,112 @@ export function useWalletStorage() {
     }
   }
 
+  /**
+   * 刷新钱包余额
+   */
+  const refreshBalance = async (index) => {
+    try {
+      if (index < 0 || index >= wallets.value.length) {
+        throw new Error('Invalid wallet index')
+      }
+
+      const wallet = wallets.value[index]
+      if (!wallet || !wallet.tools || wallet.loading) {
+        console.warn('Wallet not ready for balance refresh')
+        return false
+      }
+
+      wallet.loading = true
+      
+      try {
+        // 获取代币余额
+        const tokenBalance = await wallet.tools.getTokenBalance()
+        wallet.tokenBalance = tokenBalance.toString()
+        
+        // 获取SOL余额
+        const solBalance = await wallet.tools.getSolBalance()
+        wallet.solBalance = solBalance
+        
+        // 更新状态显示刷新成功
+        const tokenBalanceReadable = (Number(tokenBalance) / 1000000).toFixed(6)
+        const solBalanceReadable = Number(solBalance).toFixed(3)
+        wallet.status = `余额已刷新: ${tokenBalanceReadable} Tokens, ${solBalanceReadable} SOL`
+        
+        // 2秒后恢复原状态
+        setTimeout(() => {
+          if (wallet.accountInfo) {
+            wallet.status = `Found ${wallet.accountInfo.cards.length} cards | Berries: ${wallet.accountInfo.berries} | Tokens: ${tokenBalanceReadable} | SOL: ${solBalanceReadable} | Hashpower: ${wallet.accountInfo.totalHashpower}`
+          }
+        }, 2000)
+        
+        return true
+      } catch (error) {
+        console.error('Failed to refresh balance:', error)
+        wallet.status = `Error refreshing balance: ${error.message}`
+        return false
+      } finally {
+        wallet.loading = false
+      }
+    } catch (error) {
+      console.error('Failed to refresh wallet balance:', error)
+      throw error
+    }
+  }
+
+  /**
+   * 更新指定钱包的待领取奖励
+   */
+  const updatePendingRewards = (walletIndex, rewardAmount) => {
+    try {
+      // Create a new Map to trigger reactivity
+      const newMap = new Map(pendingRewards.value)
+      newMap.set(walletIndex, rewardAmount)
+      pendingRewards.value = newMap
+    } catch (error) {
+      console.error('Failed to update pending rewards:', error)
+    }
+  }
+
+  /**
+   * 移除指定钱包的待领取奖励记录
+   */
+  const removePendingRewards = (walletIndex) => {
+    try {
+      const newMap = new Map(pendingRewards.value)
+      newMap.delete(walletIndex)
+      pendingRewards.value = newMap
+    } catch (error) {
+      console.error('Failed to remove pending rewards:', error)
+    }
+  }
+
+  /**
+   * 清空所有待领取奖励记录
+   */
+  const clearAllPendingRewards = () => {
+    try {
+      pendingRewards.value = new Map()
+    } catch (error) {
+      console.error('Failed to clear pending rewards:', error)
+    }
+  }
+
+  // Watchers
+  // 监听钱包变化，自动保存（但排除 tools 属性）
+  watch(wallets, () => {
+    saveWallets()
+  }, { deep: true })
+
   return {
+    // State
     wallets,
+    pendingRewards,
+    
+    // Computed
+    totalPendingRewards,
+    formattedTotalPendingRewards,
+    
+    // Actions
     loadWallets,
     saveWallets,
     addWallet,
@@ -332,6 +463,10 @@ export function useWalletStorage() {
     getWalletStats,
     getWalletsByStatus,
     importWallets,
-    exportWallets
+    exportWallets,
+    refreshBalance,
+    updatePendingRewards,
+    removePendingRewards,
+    clearAllPendingRewards
   }
-}
+})

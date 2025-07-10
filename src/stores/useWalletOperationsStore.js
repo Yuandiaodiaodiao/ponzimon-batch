@@ -1,15 +1,35 @@
+import { defineStore } from 'pinia'
 import { SolanaWalletTools } from '../utils/solanaTools.js'
 import { ErrorHandler } from '../utils/helpers.js'
 import { WALLET_STATUS, DEFAULT_CONFIG } from '../utils/constants.js'
+import { useWalletStore } from './useWalletStore.js'
+import { useNetworkStore } from './useNetworkStore.js'
+import { useFarmRuleStore } from './useFarmRuleStore.js'
 
 /**
  * 钱包操作基类 - 提供公共的操作模式
  */
 class WalletOperationBase {
-  constructor(wallets, config, saveWallets) {
-    this.wallets = wallets
-    this.config = config
-    this.saveWallets = saveWallets
+  constructor() {
+    this.walletStore = useWalletStore()
+    this.networkStore = useNetworkStore()
+    this.farmRuleStore = useFarmRuleStore()
+  }
+
+  get wallets() {
+    return this.walletStore.wallets
+  }
+
+  get config() {
+    return this.networkStore.config
+  }
+
+  get saveWallets() {
+    return this.walletStore.saveWallets
+  }
+
+  get addWallet() {
+    return this.walletStore.addWallet
   }
 
   /**
@@ -22,7 +42,7 @@ class WalletOperationBase {
    * @returns {Promise<any>} 操作结果
    */
   async executeWalletOperation(walletIndex, loadingStatus, successStatus, operation, afterOperation = null) {
-    const wallet = this.wallets.value[walletIndex]
+    const wallet = this.wallets[walletIndex]
     if (!wallet?.tools) {
       throw new Error('Wallet tools not initialized')
     }
@@ -132,15 +152,15 @@ class WalletOperationBase {
  * 钱包操作管理器
  */
 export class WalletOperationManager extends WalletOperationBase {
-  constructor(wallets, config, saveWallets, addWallet) {
-    super(wallets, config, saveWallets)
-    this.addWallet = addWallet
+  constructor() {
+    super()
   }
+
   /**
    * 初始化钱包
    */
   async initializeWallet(index) {
-    const wallet = this.wallets.value[index]
+    const wallet = this.wallets[index]
     if (!wallet?.privateKey) {
       throw new Error('Private key not found')
     }
@@ -194,7 +214,7 @@ export class WalletOperationManager extends WalletOperationBase {
         
         console.log('Account info result:', accountInfo)
         
-        const wallet = this.wallets.value[index]
+        const wallet = this.wallets[index]
         
         if (!accountInfo) {
           wallet.accountInitialized = false
@@ -234,7 +254,10 @@ export class WalletOperationManager extends WalletOperationBase {
       WALLET_STATUS.INITIALIZING_GAME_ACCOUNT,
       WALLET_STATUS.GAME_ACCOUNT_INITIALIZED,
       async (tools) => {
-        return await tools.initGameAccountTransaction()
+        // Get selected strategy from farm rule store
+        const selectedStrategy = this.farmRuleStore.selectedStrategy
+        console.log('Initializing game account with strategy:', selectedStrategy)
+        return await tools.initGameAccountTransaction(selectedStrategy)
       },
       async (walletIndex) => {
         // 初始化后刷新卡片信息
@@ -260,13 +283,13 @@ export class WalletOperationManager extends WalletOperationBase {
   /**
    * 领取奖励
    */
-  async claimReward(index) {
+  async claimReward(index,execTransfer=false) {
     return await this.executeWalletOperation(
       index,
       WALLET_STATUS.CLAIMING_REWARD,
       WALLET_STATUS.REWARD_CLAIMED,
       async (tools) => {
-        return await tools.executeClaimReward()
+        return await tools.executeClaimReward(execTransfer)
       }
     )
   }
@@ -330,7 +353,7 @@ export class WalletOperationManager extends WalletOperationBase {
    */
   async batchInitGameAccounts() {
     // 筛选需要初始化的钱包
-    const targetWallets = this.wallets.value
+    const targetWallets = this.wallets
       .map((wallet, index) => ({ wallet, index }))
       .filter(({ wallet }) => 
         wallet.firstQueryDone && 
@@ -366,7 +389,7 @@ export class WalletOperationManager extends WalletOperationBase {
    * 批量查询卡片
    */
   async batchQueryCards() {
-    const targetWallets = this.wallets.value
+    const targetWallets = this.wallets
       .map((wallet, index) => ({ wallet, index }))
       .filter(({ wallet }) => wallet.tools && !wallet.loading)
 
@@ -388,7 +411,7 @@ export class WalletOperationManager extends WalletOperationBase {
    * 批量开启补充包
    */
   async batchOpenBoosters() {
-    const targetWallets = this.wallets.value
+    const targetWallets = this.wallets
       .map((wallet, index) => ({ wallet, index }))
       .filter(({ wallet }) => 
         wallet.accountInitialized && 
@@ -414,7 +437,7 @@ export class WalletOperationManager extends WalletOperationBase {
    * 批量领取奖励
    */
   async batchClaimRewards() {
-    const targetWallets = this.wallets.value
+    const targetWallets = this.wallets
       .map((wallet, index) => ({ wallet, index }))
       .filter(({ wallet }) => 
         wallet.accountInitialized && 
@@ -463,30 +486,57 @@ export class WalletOperationManager extends WalletOperationBase {
   }
 }
 
-/**
- * 钱包操作组合式API
- */
-export function useWalletOperations(wallets, config, saveWallets, addWallet) {
-  const operationManager = new WalletOperationManager(wallets, config, saveWallets, addWallet)
+export const useWalletOperationsStore = defineStore('walletOperations', () => {
+  // 单例模式的 WalletOperationManager
+  let operationManager = null
+
+  const getOperationManager = () => {
+    if (!operationManager) {
+      operationManager = new WalletOperationManager()
+    }
+    return operationManager
+  }
+
+  // Actions - 直接暴露操作管理器的方法
+  const initializeWallet = (index) => getOperationManager().initializeWallet(index)
+  const queryCards = (index) => getOperationManager().queryCards(index)
+  const initGameAccount = (index) => getOperationManager().initGameAccount(index)
+  const openBooster = (index) => getOperationManager().openBooster(index)
+  const claimReward = (index) => getOperationManager().claimReward(index)
+  const recycleCard = (walletIndex, cardIndex) => getOperationManager().recycleCard(walletIndex, cardIndex)
+  const stakeCard = (walletIndex, cardIndex) => getOperationManager().stakeCard(walletIndex, cardIndex)
+  const unstakeCard = (walletIndex, cardIndex) => getOperationManager().unstakeCard(walletIndex, cardIndex)
+  
+  // 私钥导入
+  const importWalletByPrivateKey = (privateKey) => getOperationManager().importWalletByPrivateKey(privateKey)
+  
+  // 批量操作
+  const batchInitGameAccounts = () => getOperationManager().batchInitGameAccounts()
+  const batchQueryCards = () => getOperationManager().batchQueryCards()
+  const batchOpenBoosters = () => getOperationManager().batchOpenBoosters()
+  const batchClaimRewards = () => getOperationManager().batchClaimRewards()
 
   return {
     // 单个钱包操作
-    initializeWallet: (index) => operationManager.initializeWallet(index),
-    queryCards: (index) => operationManager.queryCards(index),
-    initGameAccount: (index) => operationManager.initGameAccount(index),
-    openBooster: (index) => operationManager.openBooster(index),
-    claimReward: (index) => operationManager.claimReward(index),
-    recycleCard: (walletIndex, cardIndex) => operationManager.recycleCard(walletIndex, cardIndex),
-    stakeCard: (walletIndex, cardIndex) => operationManager.stakeCard(walletIndex, cardIndex),
-    unstakeCard: (walletIndex, cardIndex) => operationManager.unstakeCard(walletIndex, cardIndex),
+    initializeWallet,
+    queryCards,
+    initGameAccount,
+    openBooster,
+    claimReward,
+    recycleCard,
+    stakeCard,
+    unstakeCard,
     
     // 私钥导入
-    importWalletByPrivateKey: (privateKey) => operationManager.importWalletByPrivateKey(privateKey),
+    importWalletByPrivateKey,
     
     // 批量操作
-    batchInitGameAccounts: () => operationManager.batchInitGameAccounts(),
-    batchQueryCards: () => operationManager.batchQueryCards(),
-    batchOpenBoosters: () => operationManager.batchOpenBoosters(),
-    batchClaimRewards: () => operationManager.batchClaimRewards()
+    batchInitGameAccounts,
+    batchQueryCards,
+    batchOpenBoosters,
+    batchClaimRewards,
+
+    // 暴露操作管理器实例（如果需要直接访问）
+    getOperationManager
   }
-}
+})

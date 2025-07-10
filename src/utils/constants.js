@@ -10,7 +10,7 @@ export const NETWORK_PRESETS = {
   },
   mainnet: {
     rpcUrl: 'https://api.mainnet-beta.solana.com',
-    programId: 'pv5gAmRb1GZ92k7iuLe5JdNmj5R8Ch61N4beuf2yEdK',
+    programId: 'pmnSxWFQUz7nCncGznUYhaJdJFFUvcx97GZFhbiCYWi',
     tokenMint: 'mmMeBvEs7dmLXPJZmVQGrV3rTujsAJQHrbJVHQApgJz',
     feesWallet: '8kvqgxQG77pv6RvEou8f2kHSWi3rtx8F7MksXUqNLGmn',
     recipientAccount: '2of2F1wiv1hhea3Ar7WPs7eUMoMQqroTjbFn3PCemvCK',

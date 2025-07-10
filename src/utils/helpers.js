@@ -358,3 +358,49 @@ export function deepClone(obj) {
     return clonedObj
   }
 }
+
+/**
+ * 复制文本到剪贴板
+ * @param {string} text - 要复制的文本
+ * @returns {Promise<boolean>} 是否成功复制
+ */
+export async function copyToClipboard(text) {
+  try {
+    await navigator.clipboard.writeText(text)
+    return true
+  } catch (error) {
+    console.error('Failed to copy to clipboard:', error)
+    // Fallback for older browsers
+    try {
+      const textArea = document.createElement('textarea')
+      textArea.value = text
+      document.body.appendChild(textArea)
+      textArea.select()
+      const successful = document.execCommand('copy')
+      document.body.removeChild(textArea)
+      return successful
+    } catch (fallbackError) {
+      console.error('Fallback copy failed:', fallbackError)
+      return false
+    }
+  }
+}
+
+/**
+ * 根据农场类型获取农场槽位数
+ * @param {number} farmType - 农场类型 (1-10)
+ * @returns {number} 农场槽位数
+ */
+export function getFarmSlots(farmType) {
+  // 映射农场类型到槽位数: [2, 4, 7, 10, 13, 16, 19, 22, 25, 25]
+  const farmSlots = [2, 4, 7, 10, 13, 16, 19, 22, 25, 25]
+  
+  // 确保farmType在有效范围内
+  if (farmType < 1 || farmType > 10) {
+    console.warn(`Invalid farm type: ${farmType}. Expected 1-10.`)
+    return 2 // 默认返回最小槽位数
+  }
+  
+  // farmType从1开始，数组索引从0开始
+  return farmSlots[farmType - 1]
+}
