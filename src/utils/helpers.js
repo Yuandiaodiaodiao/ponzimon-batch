@@ -151,9 +151,6 @@ export class Validator {
   static isValidPrivateKey(privateKey) {
     if (!privateKey || typeof privateKey !== 'string') return false
     
-    // 检查长度（Base58 编码的私钥通常是 88 字符）
-    if (privateKey.length !== 88) return false
-    
     // 检查是否为有效的 Base58 字符
     const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/
     return base58Regex.test(privateKey)

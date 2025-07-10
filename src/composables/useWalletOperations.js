@@ -84,16 +84,18 @@ class WalletOperationBase {
       const promises = targetWallets.map(async ({ index }) => {
         try {
           await operation(index)
-          successCount++
           return { walletIndex: index, success: true }
         } catch (error) {
-          failedCount++
           return { walletIndex: index, success: false, error: error.message }
         }
       })
 
       const batchResults = await Promise.all(promises)
       results.push(...batchResults)
+      
+      // 统计成功和失败数量
+      successCount = batchResults.filter(r => r.success).length
+      failedCount = batchResults.filter(r => !r.success).length
     } else {
       // 顺序执行
       for (const { index } of targetWallets) {
@@ -348,7 +350,7 @@ export class WalletOperationManager extends WalletOperationBase {
       targetWallets,
       (index) => this.initGameAccount(index),
       {
-        concurrent: false, // 顺序执行，避免网络压力
+        concurrent: true, // 并发执行提高效率
         delay: DEFAULT_CONFIG.BATCH_DELAY,
         onProgress: (completed, total) => {
           console.log(`Batch initialization progress: ${completed}/${total}`)

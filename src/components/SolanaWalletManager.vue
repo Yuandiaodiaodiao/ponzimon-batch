@@ -447,9 +447,6 @@ export default {
         return
       }
       
-      const confirmed = confirm(`确认批量转账？\n\n将为 ${walletsToTransfer.length} 个钱包转账到归集地址:\n${config.recipientAccount}`)
-      if (!confirmed) return
-      
       batchLoading.value = true
       
       try {
@@ -562,13 +559,6 @@ export default {
         }
         
         const tokenBalanceReadable = (Number(tokenBalance) / 1000000).toFixed(6)
-        
-        // Confirm transfer
-        const confirmed = confirm(`确认转出 ${tokenBalanceReadable} Tokens 到归集地址？\n\n归集地址: ${config.recipientAccount}`)
-        if (!confirmed) {
-          wallet.status = 'Transfer cancelled'
-          return
-        }
         
         // Execute transfer
         const result = await wallet.tools.transferAllTokensToRecipient()
