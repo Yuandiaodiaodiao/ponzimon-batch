@@ -1,8 +1,10 @@
+import { defineStore } from 'pinia'
 import { ref, reactive, watch } from 'vue'
 import { NETWORK_PRESETS, STORAGE_KEYS } from '../utils/constants.js'
 import { StorageHelper, Validator } from '../utils/helpers.js'
 
-export function useNetworkConfig() {
+export const useNetworkStore = defineStore('network', () => {
+  // State
   const currentNetwork = ref('devnet')
   const config = reactive({
     rpcUrl: '',
@@ -32,19 +34,10 @@ export function useNetworkConfig() {
     })
   }
 
-  // 监听配置变化，自动保存
-  watch(() => ({ ...config }), () => {
-    console.log('config changed', config)
-    saveConfig()
-    triggerConfigChangeCallbacks()
-  }, { deep: true })
+  // Getters
+  const presets = NETWORK_PRESETS
 
-  // 监听网络变化，自动保存
-  watch(currentNetwork, () => {
-    saveConfig()
-    triggerConfigChangeCallbacks()
-  })
-
+  // Actions
   /**
    * 加载配置
    */
@@ -73,7 +66,7 @@ export function useNetworkConfig() {
       applyPreset('devnet')
     }
   }
-  loadConfig();
+
   /**
    * 保存配置
    */
@@ -127,8 +120,6 @@ export function useNetworkConfig() {
     return Validator.validateConfig(config)
   }
 
- 
-
   /**
    * 获取所有可用的网络预设
    */
@@ -143,10 +134,32 @@ export function useNetworkConfig() {
     return NETWORK_PRESETS.hasOwnProperty(network)
   }
 
+  // Watchers
+  // 监听配置变化，自动保存
+  watch(() => ({ ...config }), () => {
+    console.log('config changed', config)
+    saveConfig()
+    triggerConfigChangeCallbacks()
+  }, { deep: true })
+
+  // 监听网络变化，自动保存
+  watch(currentNetwork, () => {
+    saveConfig()
+    triggerConfigChangeCallbacks()
+  })
+
+  // Initialize
+  loadConfig()
+
   return {
+    // State
     currentNetwork,
     config,
-    presets: NETWORK_PRESETS,
+    
+    // Getters
+    presets,
+    
+    // Actions
     loadConfig,
     saveConfig,
     applyPreset,
@@ -155,4 +168,4 @@ export function useNetworkConfig() {
     isValidNetwork,
     onConfigChange
   }
-}
+})
