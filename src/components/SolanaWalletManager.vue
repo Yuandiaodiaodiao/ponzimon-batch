@@ -104,7 +104,7 @@
         <div v-for="(wallet, index) in wallets" :key="wallet.id" class="wallet-item">
         <div class="wallet-header">
           <h3>W{{ index + 1 }}</h3>
-          <button @click="removeWallet(index)" class="remove-btn">×</button>
+          <button @click="handleRemoveWallet(index)" class="remove-btn">×</button>
         </div>
         
         <div class="wallet-content">
@@ -202,11 +202,17 @@
           
           <!-- Token Balance Display -->
           <div v-if="wallet.firstQueryDone" class="token-balance">
-            <h4>Token Balance</h4>
             <div class="balance-container">
               <div class="balance-info">
+              <div>
                 <span class="balance-amount">{{ formatTokenBalance(wallet.tokenBalance) }}</span>
                 <span class="token-symbol">Tokens</span>
+              </div>
+               
+                <div class="sol-balance">
+                  <span class="sol-amount">{{ formatSolBalance(wallet.solBalance) }}</span>
+                  <span class="sol-symbol">SOL</span>
+                </div>
               </div>
               <div class="balance-actions">
                 <button 
@@ -422,6 +428,22 @@ export default {
       }
     }
     
+    // Handle wallet removal with confirmation
+    const handleRemoveWallet = (index) => {
+      const wallet = wallets.value[index]
+      if (!wallet) return
+      
+      const walletDisplay = wallet.publicKey ? 
+        `W${index + 1} (${wallet.publicKey.slice(0, 8)}...)` : 
+        `W${index + 1}`
+      
+      const confirmed = confirm(`确认删除钱包 ${walletDisplay}?\n\n此操作无法撤销。`)
+      
+      if (confirmed) {
+        removeWallet(index)
+      }
+    }
+    
     // Toggle public key display
     const togglePublicKeyDisplay = (index) => {
       if (wallets.value[index]) {
@@ -514,6 +536,12 @@ export default {
       return balance && balance !== '0' && Number(balance) > 0
     }
     
+    // Format SOL balance for display
+    const formatSolBalance = (balance) => {
+      if (!balance) return '0.000'
+      return Number(balance).toFixed(3)
+    }
+    
     // Refresh token balance
     const refreshTokenBalance = async (index) => {
       const wallet = wallets.value[index]
@@ -524,14 +552,18 @@ export default {
         const tokenBalance = await wallet.tools.getTokenBalance()
         wallet.tokenBalance = tokenBalance.toString()
         
+        // Also refresh SOL balance
+        const solBalance = await wallet.tools.getSolBalance()
+        wallet.solBalance = solBalance
+        
         // Update status to show refreshed balance
         const tokenBalanceReadable = (Number(tokenBalance) / 1000000).toFixed(6)
-        wallet.status = `余额已刷新: ${tokenBalanceReadable} Tokens`
+        wallet.status = `余额已刷新: ${tokenBalanceReadable} Tokens, ${formatSolBalance(solBalance)} SOL`
         
         // Reset status after 2 seconds
         setTimeout(() => {
           if (wallet.accountInfo) {
-            wallet.status = `Found ${wallet.accountInfo.cards.length} cards | Berries: ${wallet.accountInfo.berries} | Tokens: ${tokenBalanceReadable} | Hashpower: ${wallet.accountInfo.totalHashpower}`
+            wallet.status = `Found ${wallet.accountInfo.cards.length} cards | Berries: ${wallet.accountInfo.berries} | Tokens: ${tokenBalanceReadable} | SOL: ${formatSolBalance(solBalance)} | Hashpower: ${wallet.accountInfo.totalHashpower}`
           }
         }, 2000)
       } catch (error) {
@@ -784,6 +816,7 @@ export default {
       // Wallet management
       wallets,
       handleAddWallet,
+      handleRemoveWallet,
       removeWallet,
       clearAllWallets,
       toggleCardsExpanded,
@@ -823,6 +856,7 @@ export default {
       copyToClipboard,
       testConnection,
       formatTokenBalance,
+      formatSolBalance,
       hasTokenBalance,
       refreshTokenBalance,
       transferTokens
@@ -1306,6 +1340,25 @@ export default {
 
 .token-symbol {
   font-size: 11px;
+  color: #7f8c8d;
+}
+
+.sol-balance {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+}
+
+.sol-amount {
+  font-size: 14px;
+  font-weight: bold;
+  color: #8e44ad;
+  font-family: monospace;
+}
+
+.sol-symbol {
+  font-size: 10px;
   color: #7f8c8d;
 }
 

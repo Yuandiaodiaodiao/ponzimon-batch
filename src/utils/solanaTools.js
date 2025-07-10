@@ -1312,4 +1312,15 @@ export class SolanaWalletTools {
       return await this.buildAndSendTransaction(computeBudgetInstructions2)
     })
   }
+
+  // Get SOL balance of player wallet
+  async getSolBalance() {
+    try {
+      const balance = await this.connection.getBalance(this.wallet.publicKey)
+      return balance / 1000000000 // Convert lamports to SOL
+    } catch (error) {
+      console.error('Failed to get SOL balance:', error)
+      return 0
+    }
+  }
 }

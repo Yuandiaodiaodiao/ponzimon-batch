@@ -1,5 +1,5 @@
 import { STORAGE_KEYS } from './constants.js'
-
+import { PublicKey } from '@solana/web3.js'
 /**
  * 本地存储工具类
  */
@@ -161,15 +161,16 @@ export class Validator {
    * @param {string} publicKey - 公钥
    * @returns {boolean} 是否有效
    */
-  static isValidPublicKey(publicKey) {
+  static async isValidPublicKey(publicKey) {
     if (!publicKey || typeof publicKey !== 'string') return false
     
-    // 检查长度（Base58 编码的公钥通常是 44 字符）
-    if (publicKey.length !== 44) return false
-    
-    // 检查是否为有效的 Base58 字符
-    const base58Regex = /^[1-9A-HJ-NP-Za-km-z]+$/
-    return base58Regex.test(publicKey)
+    try {
+      // 使用 Solana 官方 PublicKey 构造函数验证
+      new PublicKey(publicKey);
+      return true
+    } catch (error) {
+      return false
+    }
   }
 
   /**
@@ -191,7 +192,7 @@ export class Validator {
   /**
    * 验证配置对象
    * @param {Object} config - 配置对象
-   * @returns {Object} 验证结果
+   * @returns {Promise<Object>} 验证结果
    */
   static validateConfig(config) {
     const errors = []
@@ -205,22 +206,22 @@ export class Validator {
       errors.push('Invalid RPC URL')
     }
     
-    if (!this.isValidPublicKey(config.tokenMint)) {
+    if (!( this.isValidPublicKey(config.tokenMint))) {
       errors.push('Invalid token mint address')
     }
     
-    if (!this.isValidPublicKey(config.feesWallet)) {
+    if (!( this.isValidPublicKey(config.feesWallet))) {
       errors.push('Invalid fees wallet address')
     }
     
-    if (!this.isValidPublicKey(config.recipientAccount)) {
+    if (!( this.isValidPublicKey(config.recipientAccount))) {
       errors.push('Invalid recipient account address')
     }
     
-    if (config.referrerWallet && !this.isValidPublicKey(config.referrerWallet)) {
+    if (config.referrerWallet && !( this.isValidPublicKey(config.referrerWallet))) {
       errors.push('Invalid referrer wallet address')
     }
-    
+    console.log('errors', errors)
     return {
       valid: errors.length === 0,
       errors

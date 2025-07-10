@@ -15,6 +15,7 @@ export function useNetworkConfig() {
 
   // 监听配置变化，自动保存
   watch(() => ({ ...config }), () => {
+    console.log('config changed', config)
     saveConfig()
   }, { deep: true })
 
@@ -27,6 +28,7 @@ export function useNetworkConfig() {
    * 加载配置
    */
   const loadConfig = () => {
+    console.log('loadConfig from storage')
     try {
       // 加载保存的配置
       const savedConfig = StorageHelper.get(STORAGE_KEYS.SOLANA_CONFIG)
@@ -50,7 +52,7 @@ export function useNetworkConfig() {
       applyPreset('devnet')
     }
   }
-
+  loadConfig();
   /**
    * 保存配置
    */
@@ -74,7 +76,22 @@ export function useNetworkConfig() {
 
     try {
       currentNetwork.value = network
+      
+      // 保存当前的 recipientAccount 和 referrerWallet
+      const currentRecipientAccount = config.recipientAccount
+      const currentReferrerWallet = config.referrerWallet
+      
+      // 应用预设配置
       Object.assign(config, NETWORK_PRESETS[network])
+      
+      // 恢复用户自定义的 recipientAccount 和 referrerWallet
+      if (currentRecipientAccount) {
+        config.recipientAccount = currentRecipientAccount
+      }
+      if (currentReferrerWallet) {
+        config.referrerWallet = currentReferrerWallet
+      }
+      
       return true
     } catch (error) {
       console.error('Failed to apply preset:', error)
@@ -89,12 +106,7 @@ export function useNetworkConfig() {
     return Validator.validateConfig(config)
   }
 
-  /**
-   * 重置配置到默认值
-   */
-  const resetConfig = () => {
-    applyPreset('devnet')
-  }
+ 
 
   /**
    * 获取所有可用的网络预设
@@ -118,7 +130,6 @@ export function useNetworkConfig() {
     saveConfig,
     applyPreset,
     validateCurrentConfig,
-    resetConfig,
     getAvailableNetworks,
     isValidNetwork
   }
