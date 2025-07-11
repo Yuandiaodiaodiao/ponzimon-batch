@@ -1687,6 +1687,71 @@ export class SolanaWalletTools {
     })
   }
 
+  // Upgrade farm to next tier
+  async upgradeFarm() {
+    return await this.withLock(async () => {
+      try {
+        await this.ensureInitialized()
+        
+        // Get current account info to determine current farm type
+        const accountInfo = await this.getUserAccountInfo()
+        if (!accountInfo) {
+          throw new Error('Account not initialized')
+        }
+        
+        if (!accountInfo.farm) {
+          throw new Error('No farm found')
+        }
+        
+        const currentFarmType = accountInfo.farm.farm_type
+        console.log('Current farm type:', currentFarmType)
+        
+        // Calculate next farm type (increment by 1)
+        const nextFarmType = currentFarmType + 1
+        console.log('Upgrading to farm type:', nextFarmType)
+        
+        // Create upgradeFarm instruction
+        const discriminator = Buffer.from([110, 239, 193, 1, 165, 101, 54, 200]) // 8 bytes
+        const farmTypeBuffer = Buffer.from([nextFarmType]) // 1 byte u8
+        const instructionData = Buffer.concat([discriminator, farmTypeBuffer])
+        
+        const upgradeFarmInstruction = new TransactionInstruction({
+          keys: [
+            { pubkey: this.wallet.publicKey, isSigner: true, isWritable: true },        // player_wallet
+            { pubkey: this.playerPDA, isSigner: false, isWritable: true },              // player
+            { pubkey: this.globalState, isSigner: false, isWritable: true },            // global_state
+            { pubkey: this.rewardsVault, isSigner: false, isWritable: true },           // rewards_vault
+            { pubkey: this.playerTokenAccount, isSigner: false, isWritable: true },     // player_token_account
+            { pubkey: new PublicKey('HiAkAbqMXoNfS6QLpCjvpUKgxufq3q4Z3dgx8EbLBEad'), isSigner: false, isWritable: true }, // fees_token_account
+            { pubkey: this.tokenMint, isSigner: false, isWritable: true },              // token_mint
+            { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false }            // token_program
+          ],
+          programId: this.programId,
+          data: instructionData
+        })
+        
+        // Add compute budget and send transaction
+        const instructions = createComputeBudgetInstructions()
+        instructions.push(upgradeFarmInstruction)
+        
+        console.log('Executing farm upgrade transaction...')
+        const result = await this.buildAndSendTransaction(instructions)
+        
+        if (result) {
+          console.log('Farm upgrade successful:', result)
+          return true
+        } else {
+          console.log('Farm upgrade failed')
+          return false
+        }
+        
+      } catch (error) {
+        console.error('Farm upgrade error:', error)
+        throw error
+      }
+    })
+  }
+
   // Get SOL balance of player wallet
   async getSolBalance() {
     try {

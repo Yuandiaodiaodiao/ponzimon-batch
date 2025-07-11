@@ -68,6 +68,9 @@
           <button @click="claimReward(index,true)" :disabled="!wallet.tools || wallet.loading">
             {{ wallet.loading ? '...' : 'Claim 并归集' }}
           </button>
+          <button @click="upgradeFarm(index)" :disabled="!wallet.tools || wallet.loading || Number(  wallet.accountInfo.farm?.farm_type)>=10">
+            {{ wallet.loading ? '...' : '升级农场到'+ (Number(  wallet.accountInfo.farm?.farm_type)+1) }}
+          </button>
           
           <!-- Pending Rewards Display
           <PendingReward 
@@ -451,6 +454,35 @@ const redistributeTokens = async (targetIndex) => {
     targetWallet.status = `Redistribution error: ${error.message}`
   } finally {
     targetWallet.loading = false
+  }
+}
+
+// Upgrade farm function
+const upgradeFarm = async (index) => {
+  const wallet = wallets.value[index]
+  if (!wallet || !wallet.tools || wallet.loading) return
+  
+  try {
+    wallet.loading = true
+    wallet.status = 'Upgrading farm...'
+    
+    const result = await wallet.tools.upgradeFarm()
+    
+    if (result) {
+      wallet.status = 'Farm upgraded successfully!'
+      
+      // Refresh account info to get updated farm type
+      setTimeout(() => {
+        queryCards(index)
+      }, 2000)
+    } else {
+      wallet.status = 'Farm upgrade failed'
+    }
+  } catch (error) {
+    console.error('Failed to upgrade farm:', error)
+    wallet.status = `Farm upgrade error: ${error.message}`
+  } finally {
+    wallet.loading = false
   }
 }
 
