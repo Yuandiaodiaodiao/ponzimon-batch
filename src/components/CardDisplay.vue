@@ -44,7 +44,7 @@
           Stake
         </button>
         <button 
-          v-if="card.berry_consumption"
+          v-if="card.id !== 0 && card.berry_consumption >= 0"
           @click="handleRecycleCard(card, cardIndex)"
           class="recycle-btn"
           :disabled="loading"
