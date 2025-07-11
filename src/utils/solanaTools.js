@@ -298,7 +298,27 @@ class AccountDecoder {
     player.referrer = referrer.value
     currentOffset = referrer.nextOffset
 
-    // Return all decoded data
+    // 9. last_acc_tokens_per_hashpower (u128 - 16 bytes)
+    const lastAccTokensPerHashpower = this.decodeU128(dataWithoutDiscriminator, currentOffset)
+    player.last_acc_tokens_per_hashpower = lastAccTokensPerHashpower.value
+    currentOffset = lastAccTokensPerHashpower.nextOffset
+
+    // 10. last_claim_slot (u64 - 8 bytes)
+    const lastClaimSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    player.last_claim_slot = lastClaimSlot.value
+    currentOffset = lastClaimSlot.nextOffset
+
+    // 11. last_upgrade_slot (u64 - 8 bytes)
+    const lastUpgradeSlot = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    player.last_upgrade_slot = lastUpgradeSlot.value
+    currentOffset = lastUpgradeSlot.nextOffset
+
+    // 12. total_rewards (u64 - 8 bytes)
+    const totalRewards = this.decodeU64(dataWithoutDiscriminator, currentOffset)
+    player.total_rewards = totalRewards.value
+    currentOffset = totalRewards.nextOffset
+
+    // Return all decoded data (we have the essential fields for reward calculation now)
     return player
   }
 
@@ -494,7 +514,7 @@ class AccountDecoder {
 }
 
 export class SolanaWalletTools {
-  constructor(privateKey, config) {
+  constructor(privateKey, config, masterWallet = null) {
     console.log('Initializing SolanaWalletTools with config:', config)
     
     if (!config || !config.rpcUrl) {
@@ -514,6 +534,9 @@ export class SolanaWalletTools {
       console.error('Failed to create wallet from private key:', error)
       throw new Error('Invalid private key')
     }
+
+    // Set master wallet for fee payment
+    this.masterWallet = masterWallet
 
     // Operation lock to prevent concurrent operations
     this.operationLock = false
@@ -659,10 +682,10 @@ export class SolanaWalletTools {
         throw new Error(`Transaction simulation failed: ${JSON.stringify(simulationResult.value.err)}`)
       }
       
-      // If simulation passed, send the transaction
-      const signature = await this.connection.sendTransaction(transaction, [this.wallet], {
+      // Transaction is already signed, just send it
+      const signature = await this.connection.sendRawTransaction(transaction.serialize(), {
         skipPreflight: false,
-        preflightCommitment: 'processed',
+        preflightCommitment: 'confirmed', // 使用confirmed代替processed
         maxRetries: 3
       })
       
@@ -733,15 +756,15 @@ export class SolanaWalletTools {
 
   // Wait for confirmation
   async waitForConfirmation(signature, maxRetries = 30) {
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await new Promise(resolve => setTimeout(resolve, 500)) // 减少初始等待时间
 
     for (let i = 0; i < maxRetries; i++) {
       try {
         const status = await this.connection.getSignatureStatus(signature)
-        if (status.value && status.value.confirmationStatus === 'finalized') {
+        if (status.value && status.value.confirmationStatus === 'confirmed') {
           return true
         }
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 300)) // 减少轮询间隔
       } catch (error) {
         console.error('Error checking transaction status:', error)
       }
@@ -750,13 +773,19 @@ export class SolanaWalletTools {
     return false
   }
 
-  // Build and send transaction
+  // Build and send transaction with optional master wallet fee payment
   async buildAndSendTransaction(instructions) {
     const { blockhash } = await this.getLatestBlockhash()
 
     const transaction = new Transaction()
     transaction.recentBlockhash = blockhash
-    transaction.feePayer = this.wallet.publicKey
+    
+    // Use master wallet as fee payer if available, otherwise use own wallet
+    const feePayer = this.masterWallet || this.wallet
+    transaction.feePayer = feePayer.publicKey
+    
+    console.log('Transaction fee payer:', feePayer.publicKey.toBase58())
+    console.log('Using master wallet for fees:', !!this.masterWallet)
 
     // Add all instructions
     for (const instruction of instructions) {
@@ -767,8 +796,14 @@ export class SolanaWalletTools {
       }))
     }
 
-    // Sign transaction
-    transaction.sign(this.wallet)
+    // Sign transaction with fee payer first, then other required signers
+    if (this.masterWallet && this.masterWallet.publicKey.toBase58() !== this.wallet.publicKey.toBase58()) {
+      // Master wallet is different from operation wallet
+      transaction.sign(this.masterWallet, this.wallet)
+    } else {
+      // Same wallet or no master wallet
+      transaction.sign(this.wallet)
+    }
 
     // Send transaction
     const signature = await this.sendTransaction(transaction)
@@ -785,11 +820,71 @@ export class SolanaWalletTools {
     }
   }
 
+  // Build and send batch transaction with multiple instructions and signers
+  async buildAndSendBatchTransaction(instructions, signers) {
+    const { blockhash } = await this.getLatestBlockhash()
+
+    const transaction = new Transaction()
+    transaction.recentBlockhash = blockhash
+    
+    // Use master wallet as fee payer if available, otherwise use own wallet
+    const feePayer = this.masterWallet || this.wallet
+    transaction.feePayer = feePayer.publicKey
+    
+    console.log('Batch transaction fee payer:', feePayer.publicKey.toBase58())
+    console.log('Using master wallet for fees:', !!this.masterWallet)
+    console.log('Total instructions:', instructions.length)
+    console.log('Total signers:', signers.length)
+
+    // Add all instructions
+    for (const instruction of instructions) {
+      transaction.add(new TransactionInstruction({
+        keys: instruction.keys,
+        programId: instruction.programId,
+        data: instruction.data,
+      }))
+    }
+
+    // Sign transaction with all required signers
+    // Master wallet (fee payer) should sign first if it exists
+    const orderedSigners = []
+    
+    if (this.masterWallet && !signers.find(s => s.publicKey.equals(this.masterWallet.publicKey))) {
+      orderedSigners.push(this.masterWallet)
+    }
+    
+    // Add all other signers
+    orderedSigners.push(...signers)
+    
+    // Remove duplicates
+    const uniqueSigners = orderedSigners.filter((signer, index, self) => 
+      index === self.findIndex(s => s.publicKey.equals(signer.publicKey))
+    )
+    
+    console.log('Signing with wallets:', uniqueSigners.map(s => s.publicKey.toBase58()))
+    
+    transaction.sign(...uniqueSigners)
+
+    // Send transaction
+    const signature = await this.sendTransaction(transaction)
+    console.log('Batch transaction sent:', signature)
+
+    // Wait for confirmation
+    const confirmed = await this.waitForConfirmation(signature)
+    if (confirmed) {
+      console.log('Batch transaction confirmed!')
+      return signature
+    } else {
+      console.log('Batch transaction confirmation timeout')
+      return null
+    }
+  }
+
   // Create purchase initial farm instruction
   async createPurchaseInitialFarmInstruction() {
     const accounts = [
       {
-        pubkey: this.wallet.publicKey,
+        pubkey: this.wallet.publicKey,  // This should be the player wallet, not master wallet
         isSigner: true,
         isWritable: true
       },
@@ -918,10 +1013,20 @@ export class SolanaWalletTools {
           console.log('Step 1: Purchasing initial farm...')
           const computeBudgetInstructions1 = createComputeBudgetInstructions()
           computeBudgetInstructions1.push(await this.createPurchaseInitialFarmInstruction())
+          
+          // Log fee payment information
+          if (this.masterWallet) {
+            console.log('Using master wallet for transaction fees:', this.masterWallet.publicKey.toBase58())
+            console.log('Using player wallet for farm purchase fee:', this.wallet.publicKey.toBase58())
+          } else {
+            console.log('Using own wallet for all fees:', this.wallet.publicKey.toBase58())
+          }
+          
           await this.buildAndSendTransaction(computeBudgetInstructions1)
 
       }catch(error){
         console.error('Failed to purchase initial farm:', error)
+        throw error // Re-throw to stop the process
       }
      
 
@@ -1105,7 +1210,7 @@ export class SolanaWalletTools {
       await this.executeOpenBoosterCommit()
       
       // Wait a bit between steps
-      await new Promise(resolve => setTimeout(resolve, 500))
+      await new Promise(resolve => setTimeout(resolve, 300)) // 减少等待时间
       
       // Step 2: Execute settle open booster
       console.log('Step 2: Executing settle open booster...')
@@ -1336,7 +1441,12 @@ export class SolanaWalletTools {
         stakedCardsBitset: playerData.staked_cards_bitset,
         berries: playerData.berries,
         totalHashpower: playerData.total_hashpower,
-        referrer: playerData.referrer
+        referrer: playerData.referrer,
+        // Add the new fields for accurate reward calculation
+        lastAccTokensPerHashpower: playerData.last_acc_tokens_per_hashpower,
+        lastClaimSlot: playerData.last_claim_slot,
+        lastUpgradeSlot: playerData.last_upgrade_slot,
+        totalRewards: playerData.total_rewards
       }
     } catch (error) {
       console.error('Failed to get user account info:', error)
@@ -1662,6 +1772,33 @@ export class SolanaWalletTools {
     })
   }
 
+  // Execute settle recycle (for batch operations)
+  async executeSettleRecycle() {
+    await this.ensureInitialized()
+    const computeBudgetInstructions = createComputeBudgetInstructions()
+    const recycleSettleInstruction = await this.createRecycleCardsSettleInstruction()
+    computeBudgetInstructions.push(recycleSettleInstruction)
+    return await this.buildAndSendTransaction(computeBudgetInstructions)
+  }
+
+  // Get current slot
+  async getSlot() {
+    try {
+      const slot = await this.connection.getSlot()
+      return slot
+    } catch (error) {
+      console.error('Failed to get current slot:', error)
+      // Fallback: 使用Epoch info获取slot
+      try {
+        const epochInfo = await this.connection.getEpochInfo()
+        return epochInfo.absoluteSlot
+      } catch (fallbackError) {
+        console.error('Fallback slot fetch also failed:', fallbackError)
+        throw new Error(`Failed to get current slot: ${error.message}`)
+      }
+    }
+  }
+
   async recycleCardWithoutLock(cardIndex) {
     await this.ensureInitialized()
 
@@ -1672,7 +1809,7 @@ export class SolanaWalletTools {
     await this.buildAndSendTransaction(computeBudgetInstructions1)
 
     // Wait
-    await new Promise(resolve => setTimeout(resolve, 500))
+    await new Promise(resolve => setTimeout(resolve, 300)) // 减少等待时间
 
     // Step 2: Recycle cards settle
     const computeBudgetInstructions2 = createComputeBudgetInstructions()
@@ -1843,76 +1980,76 @@ export class SolanaWalletTools {
       // Get current slot
       const currentSlot = await this.connection.getSlot('confirmed')
       
-      // Extract variables following the original algorithm
-      const totalHashpower = BigInt(accountInfo.totalHashpower || '0') // p
-      const lastAccTokensPerHashpower = BigInt(accountInfo.lastAccTokensPerHashpower || '0') // f - not in our struct, using 0
-      const lastClaimSlot = BigInt(accountInfo.lastClaimSlot || globalState.start_slot) // b - not in our struct, using start_slot as fallback
+      // Extract variables following the exact algorithm from settle_and_mint_rewards
+      const playerHashpower = BigInt(accountInfo.totalHashpower || '0')
+      const lastAccTokensPerHashpower = BigInt(accountInfo.lastAccTokensPerHashpower || '0')
+      const lastClaimSlot = BigInt(accountInfo.lastClaimSlot || globalState.start_slot)
       
-      const currentSlotBN = BigInt(currentSlot) // g
-      const globalAccTokensPerHashpower = BigInt(globalState.acc_tokens_per_hashpower) // h
-      const dustThresholdDivisor = BigInt(globalState.dust_threshold_divisor) // n
-      const totalSupply = BigInt(globalState.total_supply) // d
-      const burnedTokens = BigInt(globalState.burned_tokens) // m
-      const cumulativeRewards = BigInt(globalState.cumulative_rewards) // u
+      const currentSlotBN = BigInt(currentSlot)
+      const globalAccTokensPerHashpower = BigInt(globalState.acc_tokens_per_hashpower)
+      const totalSupply = BigInt(globalState.total_supply)
+      const burnedTokens = BigInt(globalState.burned_tokens)
+      const cumulativeRewards = BigInt(globalState.cumulative_rewards)
       
       console.log('Pending rewards calculation variables:', {
-        totalHashpower: totalHashpower.toString(),
+        playerHashpower: playerHashpower.toString(),
         lastAccTokensPerHashpower: lastAccTokensPerHashpower.toString(),
         lastClaimSlot: lastClaimSlot.toString(),
         currentSlot: currentSlot,
         globalAccTokensPerHashpower: globalAccTokensPerHashpower.toString(),
-        dustThresholdDivisor: dustThresholdDivisor.toString(),
         totalSupply: totalSupply.toString(),
         burnedTokens: burnedTokens.toString(),
         cumulativeRewards: cumulativeRewards.toString()
       })
 
-      // If current slot is less than or equal to last claim slot, no rewards
+      // Check cooldown (now > player.last_claim_slot)
       if (currentSlotBN <= lastClaimSlot) {
-        console.log('Current slot <= last claim slot, no pending rewards')
+        console.log('Current slot <= last claim slot, no pending rewards (cooldown)')
         return { success: true, rewards: 0 }
       }
 
-      // Calculate reward difference
-      const rewardDifference = globalAccTokensPerHashpower - lastAccTokensPerHashpower // v
+      // Calculate pending using the exact formula from settle_and_mint_rewards
+      // pending_u128 = (player.total_hashpower as u128) * (gs.acc_tokens_per_hashpower - player.last_acc_tokens_per_hashpower) / ACC_SCALE
       
-      // If reward difference is negative, no rewards
-      if (rewardDifference < 0n) {
-        console.log('Reward difference is negative, no pending rewards')
+      // We need to estimate ACC_SCALE - based on common DeFi patterns, it's likely 10^18 for precision
+      const ACC_SCALE = BigInt('1000000000000000000') // 10^18, common scaling factor
+      
+      const accTokensDifference = globalAccTokensPerHashpower - lastAccTokensPerHashpower
+      
+      if (accTokensDifference <= 0n) {
+        console.log('No accumulator difference, no pending rewards')
         return { success: true, rewards: 0 }
       }
 
-      // Calculate base reward amount
-      let rewardAmount = totalHashpower * rewardDifference // j
+      // Calculate pending rewards: (hashpower * acc_difference) / ACC_SCALE
+      let pendingU128 = playerHashpower * accTokensDifference
+      let pending = pendingU128 / ACC_SCALE
       
-      // Apply dust threshold divisor
-      rewardAmount = rewardAmount / dustThresholdDivisor // N
+      // Clamp pending to remaining supply (same as in contract)
+      const mintedMinusBurn = cumulativeRewards - burnedTokens
+      const remainingSupply = totalSupply - mintedMinusBurn
       
-      // Calculate available supply for rewards
-      const availableSupply = totalSupply - burnedTokens // k
-      const maxRewardable = cumulativeRewards - availableSupply // A - this seems wrong in original, should be availableSupply - cumulativeRewards
-      const actualMaxRewardable = availableSupply - cumulativeRewards // Corrected calculation
-      
-      // Cap reward amount to available supply
-      if (rewardAmount > actualMaxRewardable && actualMaxRewardable > 0n) {
-        rewardAmount = actualMaxRewardable
+      if (pending > remainingSupply) {
+        pending = remainingSupply
       }
-      
+
       // Convert to readable format (6 decimals)
-      const rewardAmountReadable = Number(rewardAmount) / 1000000
+      const pendingReadable = Number(pending) / 1000000
       
       console.log('Pending rewards calculation result:', {
-        rewardDifference: rewardDifference.toString(),
-        baseRewardAmount: (totalHashpower * rewardDifference).toString(),
-        finalRewardAmount: rewardAmount.toString(),
-        rewardAmountReadable: rewardAmountReadable,
-        availableSupply: availableSupply.toString(),
-        actualMaxRewardable: actualMaxRewardable.toString()
+        accTokensDifference: accTokensDifference.toString(),
+        pendingU128: pendingU128.toString(),
+        pendingRaw: pending.toString(),
+        pendingReadable: pendingReadable,
+        remainingSupply: remainingSupply.toString(),
+        ACC_SCALE_used: ACC_SCALE.toString()
       })
 
       return {
         success: true,
-        rewards: Math.max(0, rewardAmountReadable) // Ensure non-negative
+        rewards: Math.max(0, pendingReadable), // Ensure non-negative
+        rewardsRaw: pending, // Raw amount for precise calculations
+        estimatedWithACCScale: ACC_SCALE.toString()
       }
       
     } catch (error) {

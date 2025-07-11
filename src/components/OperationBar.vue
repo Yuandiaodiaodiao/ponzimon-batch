@@ -9,11 +9,14 @@
       <button @click="handleBatchInitGameAccounts" :disabled="!canBatchInit || batchLoading" class="batch-init">
         {{ batchLoading ? 'Processing...' : `一键开户(${availableForInit})` }}
       </button>
+      <button @click="handleBatchInitGameAccountsInSingleTx" :disabled="!canBatchInit || batchLoading" class="batch-init-single-tx">
+        {{ batchLoading ? 'Processing...' : `合并开户(${availableForInit})` }}
+      </button>
       <button @click="handleBatchClaimRewards" :disabled="!canBatchClaim || batchLoading" class="batch-claim">
-        {{ batchLoading ? 'Processing...' : `全部claim(${availableForClaim})` }}
+        {{ batchLoading ? 'Processing...' : `合并claim & 合并归集(${availableForClaim})` }}
       </button>
       <button @click="batchTransferTokens" :disabled="batchLoading" class="batch-transfer">
-        {{ batchLoading ? 'Processing...' : `批量转$Poke到归集地址(${walletsWithTokens})` }}
+        {{ batchLoading ? 'Processing...' : `转移现有余额(${walletsWithTokens})` }}
       </button>
       <button @click="exportPrivateKeys" :disabled="wallets.length === 0" class="export-backup">
         导出备份私钥
@@ -49,6 +52,7 @@ const walletOperationsStore = useWalletOperationsStore()
 const {
   initializeWallet,
   batchInitGameAccounts,
+  batchInitGameAccountsInSingleTx,
   batchClaimRewards
 } = walletOperationsStore
 
@@ -137,6 +141,29 @@ const handleBatchInitGameAccounts = async () => {
   }
 }
 
+// Batch initialize game accounts in single transaction wrapper
+const handleBatchInitGameAccountsInSingleTx = async () => {
+  if (!canBatchInit.value || batchLoading.value) return
+  
+  batchLoading.value = true
+  
+  try {
+    const result = await batchInitGameAccountsInSingleTx()
+    console.log('Batch single-tx result:', result)
+    
+    if (result.success > 0) {
+      alert(`合并开户成功!\n成功: ${result.success}\n失败: ${result.failed}`)
+    } else if (result.failed > 0) {
+      alert(`合并开户失败: ${result.failed} 个钱包`)
+    }
+  } catch (error) {
+    console.error('Batch single-tx initialization failed:', error)
+    alert(`合并开户失败: ${error.message}`)
+  } finally {
+    batchLoading.value = false
+  }
+}
+
 // Batch claim rewards wrapper
 const handleBatchClaimRewards = async () => {
   if (!canBatchClaim.value || batchLoading.value) return
@@ -144,9 +171,17 @@ const handleBatchClaimRewards = async () => {
   batchLoading.value = true
   
   try {
-    await batchClaimRewards()
+    const result = await batchClaimRewards()
+    console.log('Batch claim and transfer result:', result)
+    
+    if (result.success > 0) {
+      alert(`合并claim & 合并归集成功!\n成功: ${result.success}\n失败: ${result.failed}`)
+    } else if (result.failed > 0) {
+      alert(`合并claim & 合并归集失败: ${result.failed} 个钱包`)
+    }
   } catch (error) {
-    console.error('Batch claim failed:', error)
+    console.error('Batch claim and transfer failed:', error)
+    alert(`合并claim & 合并归集失败: ${error.message}`)
   } finally {
     batchLoading.value = false
   }
@@ -426,6 +461,19 @@ const exportPrivateKeys = async () => {
   cursor: not-allowed;
 }
 
+.wallet-controls button.batch-init-single-tx {
+  background: #17a2b8;
+  color: white;
+  border-color: #17a2b8;
+}
+
+.wallet-controls button.batch-init-single-tx:disabled {
+  background: #6c757d;
+  border-color: #6c757d;
+  color: white;
+  cursor: not-allowed;
+}
+
 .wallet-controls button.batch-claim {
   background: #6f42c1;
   color: white;
@@ -433,6 +481,19 @@ const exportPrivateKeys = async () => {
 }
 
 .wallet-controls button.batch-claim:disabled {
+  background: #6c757d;
+  border-color: #6c757d;
+  color: white;
+  cursor: not-allowed;
+}
+
+.wallet-controls button.batch-claim-transfer {
+  background: #e83e8c;
+  color: white;
+  border-color: #e83e8c;
+}
+
+.wallet-controls button.batch-claim-transfer:disabled {
   background: #6c757d;
   border-color: #6c757d;
   color: white;
